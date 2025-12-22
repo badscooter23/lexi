@@ -1,0 +1,45 @@
+# NVIDIA NIM Models Configuration
+default_model: meta/llama-3.1-70b-instruct
+
+models:
+  # Meta Llama Family
+  meta/llama-3.1-405b-instruct:
+    description: "Largest Llama model, best for complex reasoning"
+    max_tokens: 4096
+    context_window: 131072
+  
+  meta/llama-3.1-70b-instruct:
+    description: "Balanced performance and efficiency"
+    max_tokens: 4096
+    context_window: 131072
+  
+  meta/llama-3.1-8b-instruct:
+    description: "Fast and efficient for most tasks"
+    max_tokens: 4096
+    context_window: 131072
+  
+  # DeepSeek Family
+  deepseek-ai/deepseek-r1-distill-qwen-32b:
+    description: "Reasoning-focused model with strong analytical capabilities"
+    max_tokens: 4096
+    context_window: 32768
+  
+  deepseek-ai/deepseek-r1-distill-llama-70b:
+    description: "Large reasoning model based on Llama architecture"
+    max_tokens: 4096
+    context_window: 32768
+  
+  # Mistral Family
+  mistralai/mistral-7b-instruct-v0.3:
+    description: "Efficient and capable instruction-following model"
+    max_tokens: 4096
+    context_window: 32768
+
+# Common aliases for convenience
+aliases:
+  llama: meta/llama-3.1-70b-instruct
+  llama-large: meta/llama-3.1-405b-instruct
+  llama-small: meta/llama-3.1-8b-instruct
+  deepseek: deepseek-ai/deepseek-r1-distill-qwen-32b
+  mistral: mistralai/mistral-7b-instruct-v0.3
+  latest: meta/llama-3.1-70b-instruct

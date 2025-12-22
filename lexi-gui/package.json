@@ -1,0 +1,23 @@
+{
+  "name": "lexi-gui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lexi GUI for interacting with multiple LLM providers via the CLI backend.",
+  "bin": {
+    "lexi-gui": "./bin/lexi-gui.js"
+  },
+  "main": "src/server/index.js",
+  "dependencies": {
+    "yaml": "^2.6.1"
+  },
+  "scripts": {
+    "dev": "node --watch src/server/index.js",
+    "start": "node src/server/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "yaml": "^2.8.2"
+  }
+}

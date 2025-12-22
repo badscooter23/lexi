@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lexi-cli"
+version = "0.1.0"
+description = "Lexi CLI for interacting with multiple LLM providers."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Project Authors" }]
+dependencies = ["pyyaml>=6.0", "rich>=13.0"]
+
+[project.scripts]
+lexi = "lexi_cli.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"lexi_cli" = ["providers/**/*", "default-aliases.json"]

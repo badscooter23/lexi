@@ -1,0 +1,33 @@
+#
+# Top level configuration file for each provider
+#
+#     url: base url for API access to models hosted by the provider
+#     hosted_models: appended to base url to get list of hosted models
+#     api_key: how to access the API Key for a given provider (typicall a shell variable <PROVIDER>_API_KEY
+
+providers:
+  openai:
+    url: https://api.openai.com/v1
+    hosted_models: /models
+    hosted_model_fields: [id, object, created, owned_by]
+    api_key: ${OPENAI_API_KEY}
+  anthropic:
+    url: https://api.anthropic.com/v1
+    hosted_models: /models
+    hosted_model_fields: [id, type]
+    api_key: ${ANTHROPIC_API_KEY} 
+  nvidia:
+    url: https://integrate.api.nvidia.com/v1
+    hosted_models: /models
+    hosted_model_fields: [id, object, owned_by]
+    api_key: ${NVIDIA_API_KEY} 
+#  google_ai_stuio::
+#    url: https://generativelanguage.googleapis.com
+#    api_key: ${GOOGLE_AI_STUDIO_API_KEY} 
+#  vertex_ai:
+#
+
+provider_defaults:
+  max_tokens: 4096
+  temperature: 0.5
+  role: system

@@ -1,0 +1,7 @@
+{
+  "cli_name": "cli",
+  "version": "0.11",
+  "prompt": "cmd",
+  "prompt_delimiter": ">",
+  "edit_mode": "vi"
+}

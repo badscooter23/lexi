@@ -1,0 +1,8 @@
+{
+  "exit": ["e", "q", "ex"],
+  "help": ["h"],
+  "history": ["hist"],
+  "prompts": ["prompts", "prom"],
+  "providers": ["providers", "prov"],
+  "models": ["models", "mod"]
+}

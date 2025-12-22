@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+src/lexi_cli/__init__.py
+src/lexi_cli/__main__.py
+src/lexi_cli/cli.py
+src/lexi_cli/default-aliases.json
+src/lexi_cli.egg-info/PKG-INFO
+src/lexi_cli.egg-info/SOURCES.txt
+src/lexi_cli.egg-info/dependency_links.txt
+src/lexi_cli.egg-info/entry_points.txt
+src/lexi_cli.egg-info/requires.txt
+src/lexi_cli.egg-info/top_level.txt
+src/lexi_cli/providers/providers-config.yaml
+src/lexi_cli/providers/anthropic/models.yaml
+src/lexi_cli/providers/nvidia/models.yaml
+src/lexi_cli/providers/openai/models.yaml
