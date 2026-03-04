@@ -1,0 +1,4 @@
+aliases:
+  gpt4: gpt-4o
+  gpt3: gpt-3.5-turbo
+  mini: gpt-4o-mini

@@ -1,1 +1,28 @@
 __pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Node
+node_modules/
+
+# Test/coverage artifacts
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# API keys (keep .example files)
+providers/*/api-key
+providers/*/api-key.old
+!providers/*/api-key.example

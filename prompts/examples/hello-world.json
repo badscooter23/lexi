@@ -1,6 +1,0 @@
-{
-    "prompt": "Say Hello. Introduce yourself as an AI client.",
-    "max_tokens": 150,
-    "temperature": 0.7,
-    "role": "system"
-}

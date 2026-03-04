@@ -1,0 +1,21 @@
+models:
+  meta/llama-3.1-405b-instruct:
+    description: Largest Llama model, best for complex reasoning
+    max_tokens: 4096
+    context_window: 131072
+  meta/llama-3.1-70b-instruct:
+    description: Balanced performance and efficiency
+    max_tokens: 4096
+    context_window: 131072
+  meta/llama-3.1-8b-instruct:
+    description: Fast and efficient for most tasks
+    max_tokens: 4096
+    context_window: 131072
+  deepseek-ai/deepseek-r1-distill-qwen-32b:
+    description: Reasoning-focused model with strong analytical capabilities
+    max_tokens: 4096
+    context_window: 32768
+  mistralai/mistral-7b-instruct-v0.3:
+    description: Efficient and capable instruction-following model
+    max_tokens: 4096
+    context_window: 32768

@@ -1,0 +1,6 @@
+aliases:
+  llama: meta/llama-3.1-70b-instruct
+  llama-large: meta/llama-3.1-405b-instruct
+  llama-small: meta/llama-3.1-8b-instruct
+  deepseek: deepseek-ai/deepseek-r1-distill-qwen-32b
+  mistral: mistralai/mistral-7b-instruct-v0.3

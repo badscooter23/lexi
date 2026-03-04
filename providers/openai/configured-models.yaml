@@ -1,0 +1,17 @@
+models:
+  gpt-4o:
+    description: Most capable GPT-4 model, optimized for chat and text generation
+    max_tokens: 4096
+    context_window: 128000
+  gpt-4o-mini:
+    description: Faster, more cost-effective version of GPT-4o
+    max_tokens: 4096
+    context_window: 128000
+  gpt-4-turbo:
+    description: Previous generation GPT-4 model with large context window
+    max_tokens: 4096
+    context_window: 128000
+  gpt-3.5-turbo:
+    description: Fast and cost-effective model for most tasks
+    max_tokens: 4096
+    context_window: 16385

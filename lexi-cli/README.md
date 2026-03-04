@@ -1,39 +1,97 @@
 # lexi-cli
 
-Python CLI for Lexi. Uses a src/ layout, persists config/history under `~/.lexi-cli/`, and supports both single-command and interactive shells.
+Python CLI for Lexi. Uses a src/ layout, persists config/history under `~/.lexi-cli/`, and supports both single-command and interactive shell modes.
 
 ## Setup
-- Ensure Python 3.9+.
-- Install editable for development (optional): `pip install -e .`
-- Run directly via `lexi`, `python -m lexi_cli`, or the shim `./cli`.
+
+```bash
+# Requires Python 3.9+
+pip install -e .
+
+# Run
+lexi                    # If installed
+python -m lexi_cli      # From repo root
+./cli                   # Using shim script
+```
 
 ## Commands
-- `help topics | command` / `? topics | command` — show topics or details for one. Topics: `ai`, `general`, `shortcuts`. Commands with sub-commands (`config`, `prompt`) list them under topics; use `help <command> <sub>` for full syntax. Shortcuts include `!` (shell), `#<N>` (history rerun), and ↑/↓ to navigate history.
-- `version` — print `<cli_name>:<version>` from config (defaults to `lexi:0.1.0`).
-- `sh <cmd>` / `!<cmd>` — run a shell command.
-- `history [-n COUNT] [--reset|--clear]` — show recent commands or clear history; `#<N>` reruns an entry (negatives count from the end).
-- `config list [--raw|key]` — show config values (raw JSON or selected keys).
-- `config set <key> <value>` / `config rm <key>` — update or remove config entries.
-- General commands:\n  - `help` / `?` — show help topics and command usage.\n  - `alias list|add|rm` — manage command aliases stored in `~/.lexi-cli/aliases.json` (expansions are shlex-split and appended with any extra args).\n  - `config` — view or update settings. `config list [--raw|key] | config set <key> <value> | config rm <key>`\n  - `history` — show/clear history. `history [-n COUNT] [--reset|--clear]`\n  - `sh <cmd>` — run a shell command; `exit` / `quit` to leave.\n- Lexi commands:\n  - `prompt <text> [[-m|--max_tokens] N] [[-t|--temperature] T] [[-r|--role] ROLE]` — emit a prompt JSON payload using defaults from `config/config.yaml` when flags are omitted.\n    - `prompt list [name] [[-r|--raw] [-d|--detailed]]` — view saved prompts from `~/.lexi-cli/prompts/` (raw JSON or readable). Active prompt is `$$`.\n    - `prompt set [name] [--prompt TEXT] [[-m|--max_tokens] N] [[-t|--temperature] T] [[-r|--role] ROLE]` — save or update a prompt definition (defaults to `$$` active prompt); `prompt rm <name>` removes it.\n  - `provider list|add|rename|rm` — manage providers from `~/.lexi-cli/providers/providers-config.yaml` and per-provider model directories.\n  - `model list|add|set|rm|hosted` — manage models for a provider (files under `~/.lexi-cli/providers/<name>/models.yaml`). Use `model list <provider> [-r|--raw] [-t|--table] [-d|--details]` for different output formats. Use `model hosted <provider> [-r|--raw] [-t|--table]` to query the provider’s hosted models via its API.\n- `exit` / `quit` — leave the CLI.
-  - `prompt list [name] [[-r|--raw] [-d|--detailed]]` — view saved prompts from `~/.lexi-cli/prompts/` (raw JSON or readable). Active prompt is `$$`.
-  - `prompt set [name] [--prompt TEXT] [[-m|--max_tokens] N] [[-t|--temperature] T] [[-r|--role] ROLE]` — save or update a prompt definition (defaults to `$$` active prompt); `prompt rm <name>` removes it.
-- `provider list|add|rename|rm` — manage providers from `providers/providers-config.yaml` and per-provider model directories.
-- `models list|add|set|rm` — manage models for a provider (files under `providers/<name>/models.yaml`). Use `model list <provider> [-r|--raw] [-t|--table] [-d|--details]` to view models (table view uses `rich`).
-- `exit` / `quit` / `e` / `q` — leave the CLI.
 
-## Configuration & History
-- Stored in `~/.lexi-cli/config.json` and `~/.lexi-cli/history`.
-- Saved prompts persist as individual files under `~/.lexi-cli/prompts/` (active prompt is `$$.json`); defaults for prompt params come from `config/config.yaml` (or `.example`), falling back to built-ins.
-- Providers and models are stored under `~/.lexi-cli/providers/` (seeded from the repo’s `providers/` on first run). `providers-config.yaml` holds provider URLs/API keys/default models; each provider has `providers/<name>/models.yaml` with models/aliases/default. OpenAI, Anthropic, and NVIDIA are preconfigured; use `provider list` and `models list <provider>` to inspect.
-- Legacy files `.config.json`, `.cli_history`, and `~/.exp-cli/` are migrated on first run if present.
-- Default config values:
-  - `cli_name`: `lexi`
-  - `version`: `0.1.0`
-  - `prompt`: `cmd`
-  - `prompt_delimiter`: `>`
-  - `edit_mode`: `vi` (set to `emacs` if preferred)
+All main commands use **plural forms** and support subcommands. Use `help <command>` for details.
 
-## Development Notes
-- Code lives in `src/lexi_cli/`. Run `python -m lexi_cli` from the repo root while iterating.
-- Add tests under `tests/` mirroring the src layout; use pytest or unittest as preferred.
-- When publishing, the console script entrypoint is `lexi` (configured in `pyproject.toml`).
+### Lexi Commands
+
+- **`prompts`** — Manage saved prompts
+  - `prompts list [name] [-r|--raw] [-d|--detailed] [-t|--table]`
+  - `prompts set [name] --prompt TEXT [--max_tokens N] [--temperature T] [--role ROLE]`
+  - `prompts rm <name>`
+
+- **`providers`** — Manage LLM providers
+  - `providers list [--raw|-r]`
+  - `providers add <name> --url URL --api_key KEY --default_model MODEL`
+  - `providers api-key set|show|remove <name>`
+  - `providers rename <old> <new>`
+  - `providers rm <name>`
+
+- **`models`** — Manage models for a provider
+  - `models list <provider> [--raw|-r] [--table|-t] [--details|-d]`
+  - `models hosted <provider> [--raw|-r] [--table|-t]`
+  - `models default <provider> [model_name]`
+  - `models alias list|set|rm <provider> [...]`
+  - `models add|set|rm <provider> <model> [options]`
+
+- **`respond`** — Send a prompt to a provider
+  - `respond <provider> [prompt_name] [--model M] [--temperature T] [--max_tokens N] [--web-search] [--raw|-r]`
+
+- **`alias`** — Manage command aliases
+  - `alias list | alias add <name> <expansion> | alias rm <name> | alias reset`
+
+### General Commands
+
+- `help [topic|command]` / `?` — Show help
+- `config list|set|rm` — View or update settings
+- `history [-n COUNT] [--reset|--clear]` — Show or clear history
+- `sh <cmd>` / `!<cmd>` — Run a shell command
+- `version` — Show CLI version
+- `exit` / `quit` / `e` / `q` — Exit
+
+### Shortcuts
+
+- `?` — Help
+- `!<cmd>` — Shell command
+- `#<N>` — Re-run history entry (negatives count from end)
+- Arrow keys — Navigate command history
+
+## Configuration
+
+Stored in `~/.lexi-cli/` (seeded from repo's `providers/` on first run):
+
+```
+~/.lexi-cli/
+├── config.json                        # CLI settings
+├── history                            # Command history
+├── aliases.json                       # Command aliases
+├── prompts/                           # Saved prompts (active = $$.json)
+└── providers/
+    ├── providers-config.yaml          # Provider URLs, auth, request/response config
+    └── <provider>/
+        ├── configured-models.yaml     # Model metadata
+        ├── default-model.yaml         # Default model
+        ├── model-aliases.yaml         # Model shorthand aliases
+        └── api-key                    # API key (chmod 600)
+```
+
+Default config values: `cli_name: lexi`, `prompt: cmd`, `prompt_delimiter: >`, `edit_mode: vi`.
+
+Legacy files (`.config.json`, `.cli_history`, `~/.exp-cli/`) are migrated on first run.
+
+## Development
+
+```bash
+pip install -e .
+ruff check src/         # Lint
+ruff format src/        # Format
+pytest                  # Test
+pytest --cov=lexi_cli   # Test with coverage
+```
+
+Code lives in `src/lexi_cli/`. The console script entrypoint `lexi` is configured in `pyproject.toml`.
