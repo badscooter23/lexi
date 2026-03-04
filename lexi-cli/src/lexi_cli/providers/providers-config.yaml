@@ -5,18 +5,73 @@ providers:
     hosted_model_fields: [id, object, created, owned_by]
     api_key: ${OPENAI_API_KEY}
     default_model: gpt-4o
+    auth:
+      header: Authorization
+      value_prefix: "Bearer "
+    request:
+      path: /responses
+      body:
+        model: "{{model}}"
+        input:
+          - role: "{{role}}"
+            content:
+              - type: input_text
+                text: "{{prompt}}"
+      param_mapping:
+        temperature: temperature
+        max_tokens: max_output_tokens
+      tools_key: tools
+    response:
+      text_path: "output[0].content[0].text"
+
   anthropic:
     url: https://api.anthropic.com/v1
     hosted_models: /models
     hosted_model_fields: [id, type]
     api_key: ${ANTHROPIC_API_KEY}
     default_model: claude-3-5-sonnet-20241022
+    auth:
+      header: x-api-key
+      value_prefix: ""
+      extra_headers:
+        anthropic-version: "2023-06-01"
+    request:
+      path: /messages
+      body:
+        model: "{{model}}"
+        messages:
+          - role: "{{role}}"
+            content:
+              - type: text
+                text: "{{prompt}}"
+      param_mapping:
+        temperature: temperature
+        max_tokens: max_tokens
+    response:
+      text_path: "content[0].text"
+
   nvidia:
     url: https://integrate.api.nvidia.com/v1
     hosted_models: /models
     hosted_model_fields: [id, object, owned_by]
     api_key: ${NVIDIA_API_KEY}
     default_model: meta/llama-3.1-70b-instruct
+    auth:
+      header: Authorization
+      value_prefix: "Bearer "
+    request:
+      path: /chat/completions
+      body:
+        model: "{{model}}"
+        messages:
+          - role: "{{role}}"
+            content: "{{prompt}}"
+      param_mapping:
+        temperature: temperature
+        max_tokens: max_tokens
+      tools_key: tools
+    response:
+      text_path: "choices[0].message.content"
 
 defaults:
   max_tokens: 4096
