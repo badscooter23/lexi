@@ -2632,7 +2632,18 @@
         opt.textContent = m.name ? `${m.name} (${m.id})` : m.id;
         selectEl.appendChild(opt);
       });
-      if (prev) selectEl.value = prev;
+      // Keep the pick if the model is still there, else back to the default.
+      selectEl.value = models.some((m) => m.id === prev) ? prev : '';
+    }
+
+    // Read every chat provider's models again (they may have changed on the
+    // Models tab, or from the CLI), keeping each picker's choice.
+    function refreshChatModels() {
+      providerModelCache = {};
+      CHAT_PROVIDERS.forEach((name) => {
+        const sel = document.getElementById(`provider-model-${name}`);
+        if (sel) fetchModelsForProvider(name, sel);
+      });
     }
 
     function getSelectedModels() {
@@ -6120,6 +6131,7 @@
         contents.forEach((c) => c.classList.toggle('active', c.id === `tab-${target}`));
         if (target === 'chat') {
           loadPrompts();
+          refreshChatModels();
         }
         if (target === 'images') {
           refreshImagesTab();
