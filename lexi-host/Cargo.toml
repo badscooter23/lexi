@@ -20,9 +20,8 @@ dirs = "5"
 
 # Saved API keys go in the OS credential store (src/keystore.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
-keyring = { version = "3.6", features = ["apple-native"] }
-# Whether an item exists, read from its attributes alone — no secret is
-# read, so macOS doesn't ask for Keychain access (the version keyring uses).
+# The login Keychain: one item holding every key, and attribute-only checks
+# that never read a secret (so macOS doesn't ask for access).
 security-framework = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]

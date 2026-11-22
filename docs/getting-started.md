@@ -68,7 +68,7 @@ providers:
     template: openai
     api_key:
       - env: OPENAI_API_KEY            # an environment variable, used when set
-      - keychain: openai               # a system keychain item (service Lexi)
+      - keychain: openai               # a key in the system keychain
   nvidia:
     template: nvidia
     api_key:
@@ -78,7 +78,7 @@ providers:
 | Source | Meaning |
 |---|---|
 | `env: VAR` | The environment variable `VAR` (`"${VAR}"` is the same, the older form). |
-| `keychain: NAME` | The system keychain item with service `Lexi` and account `NAME`: the login Keychain on macOS, Credential Manager on Windows. The key is encrypted at rest, and macOS asks before another program reads it, so a new build of `lexi` or the desktop app may ask once. |
+| `keychain: NAME` | The key named `NAME` in the system keychain, encrypted at rest. On macOS every key Lexi keeps there is in one login-Keychain item, **Lexi API keys** (service `Lexi`; its comment lists the names it holds); on Windows each is its own Credential Manager item, service `Lexi`, account `NAME`. macOS asks before a program reads an item it didn't create — once for the one item, not once per key. Click **Always Allow**: that lasts for that copy of the program, so a new build of `lexi` or the desktop app asks once again (a release signed by its developer is remembered across updates). A key saved by an earlier version in an item of its own (`Lexi/NAME`) moves into **Lexi API keys** the first time it's read. |
 | `file: PATH` | A file holding the key. A relative path is under `~/.lexi-cli`, and `~/` is your home folder. Lexi writes its own key files with owner-only permissions (mode 0600). |
 
 The first source that has a key wins. Only a *missing* key moves on to the next one: an unset variable, no keychain item, no file. A read error — a locked keychain, access refused, an unreadable file — stops the lookup and is reported, so Lexi never quietly switches to a different key (and bills a different account). When no source has a key, the error lists every place Lexi looked.
@@ -105,9 +105,9 @@ providers api-key set openai --value sk-...
 providers api-key set anthropic --value sk-ant-...
 ```
 
-The key goes in the first keychain item or file the provider's `api_key` lists. If it lists neither, Lexi adds one to the end of the list: a keychain item named after the provider on macOS and Windows, else `providers/<provider>/api-key`. Because sources are tried in order, a saved key that comes after a set environment variable isn't used — `set` says so when that happens. Without `--value`, the key is prompted for (or read from stdin).
+The key goes in the first keychain item or file the provider's `api_key` lists. If it lists neither, Lexi adds one to the end of the list: a keychain key named after the provider on macOS and Windows, else `providers/<provider>/api-key`. Because sources are tried in order, a saved key that comes after a set environment variable isn't used — `set` says so when that happens. Without `--value`, the key is prompted for (or read from stdin).
 
-`LEXI_KEY_STORE=file` turns the keychain off (tests and CI set it): keychain sources count as missing, and saved keys go in files. A non-default `$LEXI_HOME` gets its own keychain items (account `<provider> (<home>)`).
+`LEXI_KEY_STORE=file` turns the keychain off (tests and CI set it): keychain sources count as missing, and saved keys go in files. A non-default `$LEXI_HOME` gets its own keychain keys (named `<provider> (<home>)`).
 
 To move a saved key between a file and the keychain (the config is updated to match, and the old copy deleted):
 

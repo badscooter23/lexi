@@ -2706,10 +2706,7 @@ mod tests {
         let saved = set_api_key_in(home, "p", Some("embeddings"), "emb-key", Some(&kc)).unwrap();
         assert!(saved.added);
         let account = keystore::account(home, "p/embeddings");
-        assert_eq!(
-            saved.location,
-            format!("{} item Lexi/{account}", KeyStore::Keychain.label())
-        );
+        assert_eq!(saved.location, keystore::keychain_place(&account));
         let doc = read_providers_doc(home).unwrap();
         let entry = &doc["providers"]["p"];
         assert_eq!(entry["apis"][1]["api_key"], json!([{"keychain": account}]));
