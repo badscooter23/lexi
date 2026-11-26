@@ -308,7 +308,7 @@ pub enum ProvidersCmd {
         )]
         hosted_models: String,
     },
-    /// Manage a provider's API key: where api_key in providers-config.yaml says it comes from (environment variables and files, tried in order).
+    /// Manage a provider's API key: the key Lexi saves, and the other places it's looked for first (api_key in providers-config.yaml: environment variables, your files, commands).
     #[command(name = "api-key")]
     ApiKey {
         #[command(subcommand)]
@@ -370,7 +370,7 @@ pub enum ProviderApiCmd {
 
 #[derive(Debug, Subcommand)]
 pub enum ApiKeyCmd {
-    /// Save an API key in an owner-only file: the first file the provider's api_key lists, else providers/<name>/api-key, which is added to api_key. Prompted for, or read from stdin, without --value.
+    /// Save an API key as the provider's saved key (an owner-only file, providers/<name>/api-key), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value.
     Set {
         name: String,
         #[arg(short, long)]
@@ -379,7 +379,7 @@ pub enum ApiKeyCmd {
         #[arg(long)]
         api: Option<String>,
     },
-    /// Show where the key comes from (each api_key source, in order) and the key in use, masked unless --reveal.
+    /// Show where the key is looked for, in order (the saved key among them), and the key in use, masked unless --reveal. Commands are run only with --reveal.
     Show {
         name: String,
         #[arg(short, long)]
@@ -388,13 +388,70 @@ pub enum ApiKeyCmd {
         #[arg(long)]
         api: Option<String>,
     },
-    /// Delete the saved key (the first file api_key lists, if it's in Lexi's folder); the config is left as it is.
+    /// Delete the saved key. The sources api_key lists, and the config, are left as they are.
     Remove {
         name: String,
         /// The API's own key.
         #[arg(long)]
         api: Option<String>,
     },
+    /// The places a key is looked for: list, add or remove them.
+    Source {
+        #[command(subcommand)]
+        cmd: KeySourceCmd,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KeySourceCmd {
+    /// List where the key is looked for, in order (the saved key is last unless api_key places it).
+    #[command(visible_alias = "ls")]
+    List {
+        name: String,
+        /// The sources of this API's own key.
+        #[arg(long)]
+        api: Option<String>,
+    },
+    /// Add a place to look for the key: at the end of api_key, or first with --first (one already listed moves there). Lexi never writes to it.
+    Add {
+        name: String,
+        #[command(flatten)]
+        source: KeySourceArg,
+        /// Look here before the other sources.
+        #[arg(long)]
+        first: bool,
+        /// For this API only (it gets its own api_key).
+        #[arg(long)]
+        api: Option<String>,
+    },
+    /// Stop looking in a place for the key (--saved takes out only its place in the list: the saved key is looked in last again).
+    #[command(visible_aliases = ["del", "remove"])]
+    Rm {
+        name: String,
+        #[command(flatten)]
+        source: KeySourceArg,
+        /// From this API's own api_key.
+        #[arg(long)]
+        api: Option<String>,
+    },
+}
+
+/// One place a key can be: exactly one of these.
+#[derive(Debug, clap::Args)]
+#[group(required = true, multiple = false)]
+pub struct KeySourceArg {
+    /// An environment variable.
+    #[arg(long, value_name = "VAR")]
+    pub env: Option<String>,
+    /// A file holding the key (relative to the Lexi folder; ~/ for your home folder).
+    #[arg(long, value_name = "PATH")]
+    pub file: Option<String>,
+    /// A program that prints the key, with its arguments, e.g. 'op read op://Private/OpenAI/credential' (run without a shell).
+    #[arg(long, value_name = "COMMAND")]
+    pub command: Option<String>,
+    /// The saved key's place in the list.
+    #[arg(long)]
+    pub saved: bool,
 }
 
 /// Model metadata flags shared by `models add` / `models set`.

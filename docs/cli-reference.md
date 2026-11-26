@@ -356,7 +356,7 @@ lexi providers add [OPTIONS] --url <URL> --default_model <DEFAULT_MODEL> <NAME>
 
 #### `providers api-key set`
 
-Save an API key in an owner-only file: the first file the provider's api_key lists, else providers/<name>/api-key, which is added to api_key. Prompted for, or read from stdin, without --value
+Save an API key as the provider's saved key (an owner-only file, providers/<name>/api-key), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value
 
 ```
 lexi providers api-key set [OPTIONS] <NAME>
@@ -368,7 +368,7 @@ lexi providers api-key set [OPTIONS] <NAME>
 
 #### `providers api-key show`
 
-Show where the key comes from (each api_key source, in order) and the key in use, masked unless --reveal
+Show where the key is looked for, in order (the saved key among them), and the key in use, masked unless --reveal. Commands are run only with --reveal
 
 ```
 lexi providers api-key show [OPTIONS] <NAME>
@@ -380,7 +380,7 @@ lexi providers api-key show [OPTIONS] <NAME>
 
 #### `providers api-key remove`
 
-Delete the saved key (the first file api_key lists, if it's in Lexi's folder); the config is left as it is
+Delete the saved key. The sources api_key lists, and the config, are left as they are
 
 ```
 lexi providers api-key remove [OPTIONS] <NAME>
@@ -388,6 +388,52 @@ lexi providers api-key remove [OPTIONS] <NAME>
 
 - `<NAME>`
 - `--api` — The API's own key
+
+#### `providers api-key source list`
+
+Aliases: `ls`
+
+List where the key is looked for, in order (the saved key is last unless api_key places it)
+
+```
+lexi providers api-key source list [OPTIONS] <NAME>
+```
+
+- `<NAME>`
+- `--api` — The sources of this API's own key
+
+#### `providers api-key source add`
+
+Add a place to look for the key: at the end of api_key, or first with --first (one already listed moves there). Lexi never writes to it
+
+```
+lexi providers api-key source add [OPTIONS] <--env <VAR>|--file <PATH>|--command <COMMAND>|--saved> <NAME>
+```
+
+- `<NAME>`
+- `--env` — An environment variable
+- `--file` — A file holding the key (relative to the Lexi folder; ~/ for your home folder)
+- `--command` — A program that prints the key, with its arguments, e.g. 'op read op://Private/OpenAI/credential' (run without a shell)
+- `--saved` — The saved key's place in the list
+- `--first` — Look here before the other sources
+- `--api` — For this API only (it gets its own api_key)
+
+#### `providers api-key source rm`
+
+Aliases: `del`, `remove`
+
+Stop looking in a place for the key (--saved takes out only its place in the list: the saved key is looked in last again)
+
+```
+lexi providers api-key source rm [OPTIONS] <--env <VAR>|--file <PATH>|--command <COMMAND>|--saved> <NAME>
+```
+
+- `<NAME>`
+- `--env` — An environment variable
+- `--file` — A file holding the key (relative to the Lexi folder; ~/ for your home folder)
+- `--command` — A program that prints the key, with its arguments, e.g. 'op read op://Private/OpenAI/credential' (run without a shell)
+- `--saved` — The saved key's place in the list
+- `--api` — From this API's own api_key
 
 #### `providers api list`
 

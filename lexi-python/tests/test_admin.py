@@ -1,6 +1,8 @@
 """The admin namespaces — lexi.providers / models / prompts / config / apis —
 over a temp ``$LEXI_HOME`` seeded with the shipped defaults."""
 
+import sys
+
 import pytest
 
 import lexi
@@ -21,7 +23,7 @@ def test_providers_lifecycle(home):
         "added": "mine"
     }
     mine = next(p for p in lexi.providers.list() if p["name"] == "mine")
-    assert mine["api"] == "chat-completions" and mine["key_source"] == "file"
+    assert mine["api"] == "chat-completions" and mine["key_source"] == "saved"
     assert lexi.models.default("mine")["default_model"] == "m1"
     assert (home / "providers" / "mine" / "api-key").read_text().strip() == "sk-abcdefghij"
 
@@ -29,15 +31,17 @@ def test_providers_lifecycle(home):
     assert lexi.providers.show_key("mine", reveal=True)["key"] == "sk-abcdefghij"
     assert lexi.providers.rename("mine", "yours") == {"renamed": "mine", "to": "yours"}
     assert lexi.providers.remove_key("yours") == {"removed": True}
-    # The key file followed the rename, and the config names it.
+    # The saved key followed the rename.
     assert lexi.providers.show_key("yours") == {
         "provider": "yours", "api": None, "own": True,
         "source": None, "from": None, "key": None, "error": None,
         "sources": [{
-            "kind": "file", "from": "providers/yours/api-key",
-            "state": "missing", "note": "no file",
+            "kind": "saved", "from": "providers/yours/api-key",
+            "state": "missing", "note": "none saved",
         }],
-        "save_to": "providers/yours/api-key", "adds_source": False, "env": None,
+        "save_to": "providers/yours/api-key",
+        "store": {"kind": "file", "available": True, "locked": False},
+        "env": None,
     }
     saved = lexi.providers.set_key("yours", "k2")
     assert saved == {
@@ -60,7 +64,7 @@ def test_provider_status_and_hosted_models(home):
         m.routes[("GET", "/models")] = ok({"data": [{"id": "m-a"}, {"id": "m-b"}]})
         lexi.providers.add("mock", m.url, "m-a", api_key="k")
         assert lexi.providers.status("mock") == {
-            "provider": "mock", "status": "ready", "source": "file",
+            "provider": "mock", "status": "ready", "source": "saved",
             "from": "providers/mock/api-key",
         }
         assert [x["id"] for x in lexi.models.hosted("mock")] == ["m-a", "m-b"]
@@ -264,7 +268,8 @@ def test_key_sources_and_per_api_keys(home, monkeypatch):
     assert (info["source"], info["from"], info["key"]) == ("env", "$LEXI_TEST_MINE_KEY", "from-env")
     assert [s["state"] for s in info["sources"]] == ["used", "not checked"]
 
-    # Saved in the listed file, but the variable comes first and is set.
+    # Saved (the listed Lexi key file became the saved key), but the
+    # variable comes first and is set.
     saved = lexi.providers.set_key("mine", "from-file")
     assert (saved["location"], saved["used"]) == ("providers/mine/api-key", "$LEXI_TEST_MINE_KEY")
     monkeypatch.delenv("LEXI_TEST_MINE_KEY")
@@ -276,5 +281,36 @@ def test_key_sources_and_per_api_keys(home, monkeypatch):
     own = lexi.providers.show_key("mine", api="chat-completions", reveal=True)
     assert own["own"] and own["key"] == "chat-only"
     assert own["sources"] == [{
-        "kind": "file", "from": "providers/mine/api-key-chat-completions", "state": "used",
+        "kind": "saved", "from": "providers/mine/api-key-chat-completions", "state": "used",
     }]
+
+
+def test_key_sources_can_be_listed_added_and_removed(home, tmp_path):
+    listed = lexi.providers.key_sources("openai")
+    assert [(r["kind"], r["from"]) for r in listed["sources"]] == [
+        ("env", "$OPENAI_API_KEY"), ("saved", "providers/openai/api-key"),
+    ]
+    assert listed["sources"][1]["implicit"] is True
+
+    key = tmp_path / "openai.key"
+    key.write_text("from-my-file\n")
+    after = lexi.providers.add_key_source("openai", file=str(key), first=True)
+    assert after["sources"][0] == {"kind": "file", "from": str(key), "value": {"file": str(key)}}
+    assert lexi.providers.show_key("openai", reveal=True)["key"] == "from-my-file"
+
+    cmd = [sys.executable, "-c", "print('from-cmd')"]
+    after = lexi.providers.add_key_source("openai", command=cmd, first=True)
+    assert after["sources"][0]["value"] == {"command": cmd}
+    # Listing doesn't run it; revealing does.
+    assert lexi.providers.show_key("openai")["sources"][0]["state"] == "not run"
+    assert lexi.providers.show_key("openai", reveal=True)["key"] == "from-cmd"
+
+    assert lexi.providers.remove_key_source("openai", command=cmd) == {
+        "provider": "openai", "removed": True,
+    }
+    assert lexi.providers.remove_key_source("openai", file=str(key))["removed"] is True
+    assert lexi.providers.remove_key_source("openai", file=str(key))["removed"] is False
+    with pytest.raises(ValueError, match="exactly one"):
+        lexi.providers.add_key_source("openai", env="A", file="b")
+    with pytest.raises(lexi.LexiError):
+        lexi.providers.add_key_source("openai", command=[])

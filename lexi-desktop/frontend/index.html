@@ -3564,7 +3564,9 @@
     // place, `from` the place itself).
     function keySourceText(p) {
       switch (p.source) {
-        case 'file': return `From the file ${p.from || 'providers/…/api-key'} (readable only by you)`;
+        case 'saved': return `Saved by Lexi in ${p.from || 'providers/…/api-key'} (readable only by you)`;
+        case 'file': return `From the file ${p.from || ''}`;
+        case 'command': return `From ${p.from || 'a command'} (run when a request needs the key)`;
         case 'env': return `From the environment variable ${p.from || ''}`;
         case 'config': return 'Written in providers-config.yaml';
         default: return 'No key';
@@ -3579,10 +3581,11 @@
     // After saving: a warning when an earlier source (a set variable) wins.
     function shadowNote(saved) {
       return saved && saved.used && saved.used !== saved.location
-        ? ` ${saved.used} comes first in its api_key and has a key, so that key is used.` : '';
+        ? ` ${saved.used} is looked in first and has a key, so that key is used.` : '';
     }
     const SOURCE_STATE = {
       used: 'in use', missing: 'no key', unavailable: 'not available', error: 'error', 'not checked': 'not checked',
+      'not run': 'runs when needed',
     };
     // The provider's api_key sources in order, and where a saved key goes.
     function keySourcesHtml(p) {
@@ -3591,14 +3594,15 @@
         const label = (src.state === 'missing' || src.state === 'unavailable') && src.note
           ? src.note : (SOURCE_STATE[src.state] || src.state);
         const err = src.state === 'error' ? `<div class="warn-text">${esc(src.note || '')}</div>` : '';
-        return `<li class="src-${src.state.replace(' ', '-')}"><span class="src-from">${esc(src.from)}</span>
+        const saved = src.kind === 'saved' ? ' <span class="muted">(saved key)</span>' : '';
+        return `<li class="src-${src.state.replace(' ', '-')}"><span class="src-from">${esc(src.from)}</span>${saved}
           <span class="src-state">${esc(label)}</span>${err}</li>`;
       }).join('');
       const list = items
-        ? `<div class="muted">Lexi looks for ${esc(providerDisplay(p.provider || p.name))}'s key in this order (its <code>api_key</code> in providers-config.yaml):</div><ol>${items}</ol>`
-        : `<div class="muted">providers-config.yaml names nowhere to find this provider's key.</div>`;
+        ? `<div class="muted">Lexi looks for ${esc(providerDisplay(p.provider || p.name))}'s key in this order:</div><ol>${items}</ol>`
+        : `<div class="muted">Nowhere to look for this provider's key.</div>`;
       const save = p.save_to
-        ? `<div class="muted">A key saved here goes ${esc(storePhrase(p))}${p.adds_source ? ', which Lexi adds to the end of the list' : ''}.</div>`
+        ? `<div class="muted">A key saved here goes ${esc(storePhrase(p))}.</div>`
         : '';
       return list + save;
     }
@@ -3644,9 +3648,9 @@
         apiKeySaveBtn.dataset.tip = `Save this key ${storePhrase(data)}`;
         apiKeyRevealBtn.disabled = !hasKey;
         apiKeyTestBtn.disabled = !hasKey;
-        // Remove works on the first file listed.
-        const savedSource = (data.sources || []).find((x) => x.kind === 'file');
-        apiKeyRemoveBtn.disabled = !savedSource;
+        // Remove deletes the saved key, when there is one.
+        const savedSource = (data.sources || []).find((x) => x.kind === 'saved');
+        apiKeyRemoveBtn.disabled = !savedSource || savedSource.state === 'missing';
       } catch (err) {
         apiKeyStatusEl.textContent = 'No API key set.';
         apiKeySourceEl.textContent = err.message;
@@ -4040,10 +4044,10 @@
           let have = '';
           const srcs = p.sources || [];
           const usedAt = srcs.findIndex((x) => x.state === 'used');
-          let saveAt = srcs.findIndex((x) => x.kind === 'file');
+          let saveAt = srcs.findIndex((x) => x.kind === 'saved');
           if (saveAt < 0) saveAt = srcs.length;
           if (p.source && usedAt < saveAt) {
-            have = `<p class="notice">${esc(p.display)} already gets a key from <code>${esc(p.from)}</code>, which comes first in its <code>api_key</code> list. A key you save is used only when that has none.</p>`;
+            have = `<p class="notice">${esc(p.display)} already gets a key from <code>${esc(p.from)}</code>, which is looked in first. A key you save is used only when that has none.</p>`;
           } else if (p.source && usedAt === saveAt) {
             have = `<p class="notice">${esc(p.display)} already has a key (${esc(keySourceText(p).toLowerCase())}). A new one replaces it.</p>`;
           } else if (p.source) {
@@ -4068,7 +4072,7 @@
           page.innerHTML = `
             <label class="choice"><input type="radio" name="wzMode" value="save" ${mode === 'save' ? 'checked' : ''}>
               <div style="flex:1;"><div class="choice-title">Save the key ${esc(storePhrase(p))}</div>
-                <div class="muted" style="font-size:0.85rem;">Lexi, the <code>lexi</code> command line and the Python library all read it from there.${p.adds_source ? ` Lexi adds it to the end of ${esc(p.display)}'s <code>api_key</code> list in providers-config.yaml.` : ''}</div>
+                <div class="muted" style="font-size:0.85rem;">Lexi, the <code>lexi</code> command line and the Python library all read it from there.</div>
                 <div class="choice-detail" data-for="save">
                   <div class="key-row">
                     <input type="password" id="wzKey" placeholder="Paste your ${esc(p.display)} API key" autocomplete="off" spellcheck="false">

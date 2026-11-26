@@ -322,6 +322,10 @@ pub fn resolve_model(
             }
             if let Some(k) = meta.get("api_key") {
                 cfg.insert("api_key".into(), k.clone());
+                cfg.insert(
+                    config::KEY_SCOPE.into(),
+                    serde_json::json!({ "model": format!("providers/{provider}/configured-models.yaml") }),
+                );
             }
         }
     }

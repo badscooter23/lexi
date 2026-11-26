@@ -567,9 +567,10 @@ fn unseen_notes(text: &str, seen: Option<&str>, current: &str) -> Vec<Value> {
 
 /// One provider's credential state for the startup screen, the API key panel
 /// and the setup wizard: its `api_key` sources in order and what each had
-/// (`sources`), the one the key came from (`source` kind, `from` place), the
-/// first environment variable it reads, the file a saved key goes in
-/// (`save_to`, `adds_source`), and the template's `setup` help.
+/// (`sources`, the saved key among them), the one the key came from
+/// (`source` kind, `from` place), the first environment variable it reads,
+/// where a saved key goes (`save_to`, `store`), and the template's `setup`
+/// help. Commands (`command:` sources) aren't run here.
 fn provider_credentials(name: &str) -> Value {
     let cfg = lexi_host::admin::provider_config(name).unwrap_or(Value::Null);
     let setup = cfg.get("setup").cloned().unwrap_or(Value::Null);
@@ -583,13 +584,7 @@ fn provider_credentials(name: &str) -> Value {
         Ok(info) => {
             let env = info.get("env").and_then(Value::as_str);
             for k in [
-                "source",
-                "from",
-                "key",
-                "error",
-                "sources",
-                "save_to",
-                "adds_source",
+                "source", "from", "key", "error", "sources", "save_to", "store",
             ] {
                 out[k] = info[k].clone();
             }
@@ -646,9 +641,9 @@ fn startup_seen() -> Result<Value, String> {
 }
 
 /// `POST /api/providers/api-key` `{action: show|set|remove, provider,
-/// reveal?, value?}` — a provider's API key: `set` saves it in an owner-only
-/// file (the first its `api_key` lists, else the provider's key file, which
-/// is added), `remove` deletes the saved one. Every action answers with the
+/// reveal?, value?}` — a provider's API key: `set` saves it as the saved key
+/// (the provider's owner-only key file; listed sources are never written),
+/// `remove` deletes the saved one. Every action answers with the
 /// provider's credentials afterwards (plus `location`/`added`/`used`, or
 /// `removed`).
 fn provider_api_key(body: Value) -> Result<Value, String> {
@@ -1752,11 +1747,12 @@ pub(crate) mod tests {
         let saved = super::handle("POST", "/api/providers/api-key", Some(key("set", "sk-bad")))
             .await
             .unwrap();
-        assert_eq!(saved["source"], "file");
-        // The config had only the (unset) variable, so a key file was added
-        // after it.
-        assert_eq!(saved["added"], true);
+        assert_eq!(saved["source"], "saved");
+        // The saved key comes after the (unset) variable; the config isn't
+        // changed.
+        assert_eq!(saved["added"], false);
         assert_eq!(saved["location"], "providers/openai/api-key");
+        assert_eq!(saved["store"]["kind"], "file");
         let states: Vec<&str> = saved["sources"]
             .as_array()
             .unwrap()

@@ -8,6 +8,11 @@ go under **Unreleased**; at release time that heading becomes the version
 
 ## Unreleased
 
+### API keys
+- **Keys from a password manager.** A provider's `api_key` can list a command that prints the key, such as 1Password's `op read op://Private/OpenAI/credential`, `sops -d` or `age -d`. It runs only when a request needs the key (listing providers or opening the app doesn't set off a Touch ID prompt), and once per command or Python session.
+- **Change where a key is looked for from the command line.** `lexi providers api-key source list`, `add` and `rm` (Python: `lexi.providers.key_sources`, `add_key_source`, `remove_key_source`) list the places in order, add an environment variable, a file, a command or the saved key's place, and take them out.
+- **Saving a key no longer edits providers-config.yaml.** The key Lexi saves is always looked in after the places you list (put `saved` in the list to look in it earlier), and saving never writes to a file you listed. Your config is tidied once: Lexi's own key file comes out of the list, and the same key keeps being used.
+
 ## 0.3.0 — 2026-11-25
 
 Lexi 0.3.0 brings an Images tab and a CLI tab to the desktop app, shows the command behind every button, keeps your API keys in files only you can read, and gives each provider a default model for each kind.

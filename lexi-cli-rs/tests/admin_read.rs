@@ -122,7 +122,7 @@ fn providers_list_reports_key_sources_without_revealing_keys() {
         .any(|l| l.starts_with("b:") && l.ends_with("api_key=[env]")));
     assert!(out
         .lines()
-        .any(|l| l.starts_with("c:") && l.ends_with("api_key=[file]")));
+        .any(|l| l.starts_with("c:") && l.ends_with("api_key=[saved]")));
     assert!(out
         .lines()
         .any(|l| l.starts_with("d:") && l.ends_with("api_key=[missing]")));

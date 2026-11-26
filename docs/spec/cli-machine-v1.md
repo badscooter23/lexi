@@ -53,7 +53,8 @@ API keys are never included in any result except `providers api-key show`
 | `providers upgrade` | `[{"provider", "template", "changed", "before", "after", "dropped", "kept", "backup"?}]` — `backup` (the copy of the old file) only with `--yes` |
 | `providers api list` | `[{"api", "for"?, "default_model"?, "url"?, "enabled", "source"}]`; `source` ∈ `"template" \| "user" \| "config"` |
 | `providers api add` / `rm` | `{"provider", "api", "existed"}` / `{"provider", "removed"}` |
-| `providers api-key set` / `show` / `remove` | `{"provider"}` / `{"provider", "source", "key"}` / `{"removed": bool}` |
+| `providers api-key set` / `show` / `remove` | `{"provider", "location", "added", "used"}` / `{"provider", "api", "own", "source", "from", "key", "error", "sources", "save_to", "store", "env"}` / `{"removed": bool}`. `source` ∈ `"env" \| "file" \| "command" \| "saved" \| "config"`; each of `sources` is `{"kind", "from", "state", "note"?}`, `state` ∈ `"used" \| "missing" \| "error" \| "not run" \| "not checked"` |
+| `providers api-key source list` / `add` / `rm` | `{"provider", "api", "own", "sources": [{"kind", "from", "value", "implicit"?}]}` (list and add) / `{"provider", "removed": bool}` |
 | `models list` | `[{"id", "name", "description", "default", "default_for", "aliases", "metadata", "kind", "api", "tags"}]` — `default_for` the kinds it's your default for; `api` serves the model; `tags` its effective tags |
 | `models tag` | `{"provider", "model", "tags": ["+tag" \| "-tag", …]}` (your ops on that id/glob) · with `--clear`: `{"provider", "model", "cleared": bool}` |
 | `models tags` | `{"provider", "model", "kind", "api", "binding", "tags": [{"tag", "source"}], "in_catalog", "limits"?, "name"?, "error"?}` (`limits`/`name` from the cached catalog) — `api`/`binding` null and `error` set when no API serves the model; `source` ∈ `api:<name>`, `rule:<glob>`, `catalog`, `user`, `kind` |

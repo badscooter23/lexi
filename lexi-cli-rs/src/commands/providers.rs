@@ -2,7 +2,7 @@
 
 use serde_json::{json, Value};
 
-use crate::cli::{ApiKeyCmd, ProviderApiCmd, ProvidersCmd};
+use crate::cli::{ApiKeyCmd, KeySourceArg, KeySourceCmd, ProviderApiCmd, ProvidersCmd};
 use crate::output::{scalar, table, Io};
 
 pub(crate) async fn run(io: &mut Io<'_>, cmd: ProvidersCmd) -> u8 {
@@ -29,6 +29,7 @@ pub(crate) async fn run(io: &mut Io<'_>, cmd: ProvidersCmd) -> u8 {
             ApiKeyCmd::Set { name, value, api } => key_set(io, &name, value, api.as_deref()),
             ApiKeyCmd::Show { name, reveal, api } => key_show(io, &name, reveal, api.as_deref()),
             ApiKeyCmd::Remove { name, api } => key_remove(io, &name, api.as_deref()),
+            ApiKeyCmd::Source { cmd } => key_sources(io, cmd),
         },
         ProvidersCmd::Api { cmd } => api(io, cmd),
         ProvidersCmd::Upgrade {
@@ -95,15 +96,15 @@ fn add(
 }
 
 /// What a saved key means for messages: where it went, whether the config
-/// gained that source, and a warning when an earlier source wins.
+/// changed, and a warning when an earlier source wins.
 fn saved_message(lead: &str, saved: &lexi_host::config::SavedKey) -> String {
     let mut msg = format!("{lead} {}.", saved.location);
     if saved.added {
-        msg.push_str(" Added it to the provider's api_key in providers-config.yaml.");
+        msg.push_str(" Updated its api_key in providers-config.yaml.");
     }
     match &saved.used {
         Some(used) if *used != saved.location => msg.push_str(&format!(
-            "\nNote: {used} comes first in api_key and has a key, so that key is used."
+            "\nNote: {used} comes first and has a key, so that key is used."
         )),
         _ => {}
     }
@@ -150,14 +151,19 @@ fn key_show(io: &mut Io<'_>, name: &str, reveal: bool, api: Option<&str>) -> u8 
     if sources.is_empty() {
         lines.push(format!("{whose}{name}'s api_key names no source."));
     } else {
-        lines.push(format!("{whose}api_key sources, in order:"));
+        lines.push(format!("{whose}Looked for in this order:"));
         for (i, s) in sources.iter().enumerate() {
             let note = s["note"]
                 .as_str()
                 .map(|n| format!(": {n}"))
                 .unwrap_or_default();
+            let saved = if s["kind"] == "saved" {
+                " (saved key)"
+            } else {
+                ""
+            };
             lines.push(format!(
-                "  {}. {} — {}{note}",
+                "  {}. {}{saved} — {}{note}",
                 i + 1,
                 scalar(s.get("from")),
                 scalar(s.get("state"))
@@ -186,6 +192,84 @@ fn key_remove(io: &mut Io<'_>, name: &str, api: Option<&str>) -> u8 {
             json!({ "removed": false }),
         ),
         Err(e) => io.fail(e),
+    }
+}
+
+/// A `--env`/`--file`/`--command`/`--saved` choice as an `api_key` entry.
+fn source_value(arg: &KeySourceArg) -> Result<Value, String> {
+    if let Some(v) = &arg.env {
+        return Ok(json!({ "env": v }));
+    }
+    if let Some(p) = &arg.file {
+        return Ok(json!({ "file": p }));
+    }
+    if let Some(c) = &arg.command {
+        return match shlex::split(c) {
+            Some(argv) if !argv.is_empty() => Ok(json!({ "command": argv })),
+            _ => Err(format!("can't read the command {c:?} (check its quotes)")),
+        };
+    }
+    Ok(json!(lexi_host::config::SAVED_SOURCE))
+}
+
+/// The sources as numbered lines.
+fn sources_text(list: &Value) -> String {
+    let rows = list["sources"].as_array().cloned().unwrap_or_default();
+    let mut lines = vec!["Looked for in this order:".to_string()];
+    for (i, r) in rows.iter().enumerate() {
+        let what = match r["kind"].as_str() {
+            Some("saved") if r["implicit"] == true => " (saved key; last unless api_key places it)",
+            Some("saved") => " (saved key)",
+            _ => "",
+        };
+        lines.push(format!("  {}. {}{what}", i + 1, scalar(r.get("from"))));
+    }
+    lines.join("\n")
+}
+
+fn key_sources(io: &mut Io<'_>, cmd: KeySourceCmd) -> u8 {
+    match cmd {
+        KeySourceCmd::List { name, api } => {
+            match lexi_host::config::key_source_list(&name, api.as_deref()) {
+                Ok(list) => io.result(sources_text(&list), list),
+                Err(e) => io.fail(e),
+            }
+        }
+        KeySourceCmd::Add {
+            name,
+            source,
+            first,
+            api,
+        } => {
+            let value = match source_value(&source) {
+                Ok(v) => v,
+                Err(e) => return io.fail(e),
+            };
+            match lexi_host::config::add_key_source(&name, api.as_deref(), &value, first) {
+                Ok(list) => io.result(
+                    format!("Updated {name}'s api_key.\n{}", sources_text(&list)),
+                    list,
+                ),
+                Err(e) => io.fail(e),
+            }
+        }
+        KeySourceCmd::Rm { name, source, api } => {
+            let value = match source_value(&source) {
+                Ok(v) => v,
+                Err(e) => return io.fail(e),
+            };
+            match lexi_host::config::remove_key_source(&name, api.as_deref(), &value) {
+                Ok(removed) => {
+                    let msg = if removed {
+                        format!("Removed it from {name}'s api_key.")
+                    } else {
+                        format!("{name}'s api_key doesn't list it.")
+                    };
+                    io.result(msg, json!({ "provider": name, "removed": removed }))
+                }
+                Err(e) => io.fail(e),
+            }
+        }
     }
 }
 

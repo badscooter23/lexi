@@ -27,11 +27,14 @@ your edits are never overwritten.
 ### API keys
 
 Each provider looks for its key in order: an environment variable
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`), then a key file Lexi
+(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`), then the key Lexi
 saved. `lexi providers api-key set <provider>` (or the desktop app's Setup
 Wizard) saves the key in an owner-only file under `~/.lexi-cli/providers/<provider>/`,
 never in `providers-config.yaml`; `providers api-key show <provider>` lists
-where Lexi looked and which key is used. The CLI, the desktop app and the
+where Lexi looked and which key is used. Files of your own and password
+managers (`command: [op, read, …]`) can be added with
+`providers api-key source add` — see
+[Getting Started](docs/getting-started.md#where-a-key-comes-from). The CLI, the desktop app and the
 Python library all read the same places.
 
 ## Core Commands
@@ -157,7 +160,7 @@ from:
   mine:
     url: https://api.example.com/v1
     api: chat-completions
-    api_key: [{env: MINE_API_KEY}, {file: providers/mine/api-key}]
+    api_key: [{env: MINE_API_KEY}]     # then the key Lexi saved
     default_model: some-model
 ```
 

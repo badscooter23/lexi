@@ -56,30 +56,105 @@ def remove(name: str) -> Dict[str, Any]:
 
 
 def set_key(name: str, key: str, *, api: Optional[str] = None) -> Dict[str, Any]:
-    """Save an API key in an owner-only file: the first file the provider's
-    ``api_key`` (in providers-config.yaml) lists, else
-    ``providers/<name>/api-key``, which is added to ``api_key``. With ``api``,
-    the key is for that API only (``providers/<name>/api-key-<api>``). Returns
-    ``{provider, location, added, used}``: ``location`` is the file,
-    ``added`` whether the config gained it, ``used`` the source the key is now
-    read from (another one when an earlier source has a key)."""
+    """Save an API key as the provider's saved key: an owner-only file,
+    ``providers/<name>/api-key`` (``api-key-<api>`` with ``api``, a key for
+    that API only), looked in after the sources ``api_key`` lists, which are
+    never written. Returns ``{provider, location, added, used}``:
+    ``location`` is the file, ``added`` whether providers-config.yaml changed
+    (an API got its own ``api_key``, or a key written in it was taken out),
+    ``used`` where the key is now read from (another source when an earlier
+    one has a key)."""
     return call("providers.set_key", name=name, key=key, api=api)
 
 
 def show_key(name: str, *, reveal: bool = False, api: Optional[str] = None) -> Dict[str, Any]:
     """Where the provider's (or ``api``'s) key comes from: ``{provider, api,
-    own, source, from, key, error, sources, save_to, adds_source, env}``.
-    ``sources`` is its ``api_key`` list in order, each ``{kind, from, state,
-    note?}``; ``source``/``from``/``key`` describe the key that's used (masked
-    unless ``reveal``; None when there's none); ``save_to`` is the file
-    :func:`set_key` would save one in."""
+    own, source, from, key, error, sources, save_to, store, env}``.
+    ``sources`` is where it's looked for, in order (the saved key among them),
+    each ``{kind, from, state, note?}``; ``source``/``from``/``key`` describe
+    the key that's used (masked unless ``reveal``; None when there's none).
+    Commands run only with ``reveal``. ``save_to`` is the file
+    :func:`set_key` saves the key in."""
     return call("providers.show_key", name=name, reveal=reveal, api=api)
 
 
 def remove_key(name: str, *, api: Optional[str] = None) -> Dict[str, Any]:
-    """Delete the saved key (the first file ``api_key`` lists, if it's in
-    Lexi's folder; the config is left as it is): ``{"removed": bool}``."""
+    """Delete the saved key (the sources ``api_key`` lists, and the config,
+    are left as they are): ``{"removed": bool}``."""
     return call("providers.remove_key", name=name, api=api)
+
+
+def _source(
+    env: Optional[str],
+    file: Optional[str],
+    command: Optional[Any],
+    saved: bool,
+) -> Any:
+    given = [x for x in (env, file, command) if x is not None] + ([True] if saved else [])
+    if len(given) != 1:
+        raise ValueError("give exactly one of env, file, command or saved")
+    if env is not None:
+        return {"env": env}
+    if file is not None:
+        return {"file": file}
+    if command is not None:
+        if isinstance(command, str):
+            import shlex
+
+            command = shlex.split(command)
+        return {"command": [str(c) for c in command]}
+    return "saved"
+
+
+def key_sources(name: str, *, api: Optional[str] = None) -> Dict[str, Any]:
+    """Where the provider's (or ``api``'s own) key is looked for, in order:
+    ``{provider, api, own, sources: [{kind, from, value, implicit?}]}``.
+    ``value`` is the ``api_key`` entry as written; the saved key is
+    ``implicit`` when the list doesn't place it (it's then last)."""
+    return call("providers.key_sources", name=name, api=api)
+
+
+def add_key_source(
+    name: str,
+    *,
+    env: Optional[str] = None,
+    file: Optional[str] = None,
+    command: Optional[Any] = None,
+    saved: bool = False,
+    first: bool = False,
+    api: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Add a place to look for the key (exactly one of ``env``, ``file``,
+    ``command`` — a list of program and arguments, or one string split like a
+    shell would — or ``saved``, the saved key's place): at the end of
+    ``api_key``, or first with ``first``. Lexi never writes to it. Returns the
+    sources afterwards (:func:`key_sources`)."""
+    return call(
+        "providers.add_key_source",
+        name=name,
+        api=api,
+        first=first,
+        source=_source(env, file, command, saved),
+    )
+
+
+def remove_key_source(
+    name: str,
+    *,
+    env: Optional[str] = None,
+    file: Optional[str] = None,
+    command: Optional[Any] = None,
+    saved: bool = False,
+    api: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Stop looking in a place for the key (``saved`` takes out only its
+    place: the saved key is looked in last again): ``{provider, removed}``."""
+    return call(
+        "providers.remove_key_source",
+        name=name,
+        api=api,
+        source=_source(env, file, command, saved),
+    )
 
 
 def upgrade(name: str, *, template: Optional[str] = None, apply: bool = False) -> Dict[str, Any]:

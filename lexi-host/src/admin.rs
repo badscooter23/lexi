@@ -114,21 +114,24 @@ fn mask(key: &str) -> String {
 }
 
 /// A provider's (or, with `api`, one API's) API key: `{provider, api, own,
-/// source, from, key, error, sources, save_to, adds_source, env}`.
-/// - `sources`: its `api_key` list in order, each `{kind, from, state, note?}`
-///   (`state`: `used`, `missing`, `error`, `not checked`); `own` is false
-///   when the API has no list of its own and uses the provider's.
+/// source, from, key, error, sources, save_to, store, env}`.
+/// - `sources`: where it's looked for, in order — its `api_key` list with the
+///   saved key in its place — each `{kind, from, state, note?}` (`kind`:
+///   `env`, `file`, `command`, `saved`, `config`; `state`: `used`,
+///   `missing`, `error`, `not run`, `not checked`); `own` is false when the
+///   API has no list of its own and uses the provider's.
 /// - `source`/`from`: the kind and place of the key that's used, and `key` it
 ///   (masked unless `reveal`) — all null when there's none; `error` is a read
-///   error that stopped the lookup.
-/// - `save_to`: the file `providers api-key set` would save a key in, and
-///   `adds_source` whether that file would be added to the config.
+///   error that stopped the lookup. Commands run only with `reveal`: else a
+///   command is `not run`, and is `source` when it would be used.
+/// - `save_to`: the file `providers api-key set` saves the key in; `store`:
+///   `{kind, available, locked}` — where saved keys are kept (`file`).
 /// - `env`: the first environment variable the list reads, if any.
 pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value, HostError> {
     provider_config(name)?;
-    let plan = config::key_plan(name, api)?;
+    let plan = config::key_plan(name, api, reveal)?;
     let lookup = &plan.lookup;
-    let used = lookup.used();
+    let used = lookup.source();
     let env = plan.sources.iter().find_map(|s| match s {
         Source::Env(v) => Some(v.clone()),
         _ => None,
@@ -142,8 +145,8 @@ pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value
         "key": lookup.key.as_deref().map(|k| if reveal { k.to_string() } else { mask(k) }),
         "error": lookup.failure().map(|(s, e)| format!("couldn't read {}: {e}", s.describe())),
         "sources": lookup.to_value(),
-        "save_to": plan.save_to.describe(),
-        "adds_source": plan.adds,
+        "save_to": plan.save_to,
+        "store": { "kind": "file", "available": true, "locked": false },
         "env": env,
     }))
 }
