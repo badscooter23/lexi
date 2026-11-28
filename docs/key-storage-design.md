@@ -320,7 +320,7 @@ Each step is its own PR with CHANGELOG notes.
 
 ## 11. Addition: named keys (several accounts per provider)
 
-**Status:** accepted · 2026-11-28 (decisions in §11.10)
+**Status:** accepted · 2026-11-28 (decisions in §11.10) · implemented (host, CLI, Python; desktop with step 4)
 
 ### 11.1 Problem
 
@@ -428,6 +428,14 @@ key that made them must be used again:
 
 - `providers api-key set openai --name work` creates the named key if it
   doesn't exist yet. That's the one-step path most people need.
+- **As built,** the commands that manage named keys are their own group,
+  `providers keys list|add|rename|rm|default`, rather than `providers
+  api-key add|rename|rm|default`: `api-key remove` already deletes a saved
+  key, and an `api-key rm` beside it would mean something else. The Python
+  functions are `providers.keys`, `add_key`, `rename_key`, `delete_key` and
+  `set_default_key`. On the key functions, the named key is `key_name=`
+  (CLI `--name`), because `set_key`'s `key` is the key itself. Requests take
+  `key=` (CLI `--key`). JSON results name it `key_name`.
 
 **The `provider#key` shorthand.** Wherever a command or function takes the
 provider a request goes to, `openai#work` means `openai` with `--key work`:

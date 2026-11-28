@@ -14,13 +14,14 @@ def list() -> List[Dict[str, Any]]:
     return call("providers.list")
 
 
-def status(name: str) -> Dict[str, Any]:
+def status(name: str, *, key: Optional[str] = None) -> Dict[str, Any]:
     """Check the provider's API key against its models endpoint:
     ``{provider, status, source, from}``, ``status`` one of ``"ready"``,
     ``"no api-key"``, ``"invalid api-key"``; ``source`` is the kind of place
     the key came from (``env``/``file``/``config``) and ``from`` that place
-    (``$OPENAI_API_KEY``, a path)."""
-    return call("providers.status", name=name)
+    (``$OPENAI_API_KEY``, a path). ``key`` (or ``"openai#work"``) checks one
+    of its named keys."""
+    return call("providers.status", name=name, key=key)
 
 
 def add(
@@ -56,7 +57,9 @@ def remove(name: str) -> Dict[str, Any]:
     return call("providers.remove", name=name)
 
 
-def set_key(name: str, key: str, *, api: Optional[str] = None) -> Dict[str, Any]:
+def set_key(
+    name: str, key: str, *, api: Optional[str] = None, key_name: Optional[str] = None
+) -> Dict[str, Any]:
     """Save an API key as the provider's saved key (``api``: a key for that
     API only) — in the OS key store (macOS Keychain, Windows Credential
     Manager, the Linux desktop keyring), else an owner-only file,
@@ -69,11 +72,16 @@ def set_key(name: str, key: str, *, api: Optional[str] = None) -> Dict[str, Any]
     or ``"file"``, ``added`` whether providers-config.yaml changed
     (an API got its own ``api_key``, or a key written in it was taken out),
     ``used`` where the key is now read from (another source when an earlier
-    one has a key)."""
-    return call("providers.set_key", name=name, key=key, api=api)
+    one has a key). ``key_name`` (or ``name`` written ``"openai#work"``)
+    saves one of the provider's named keys, adding it if it isn't there yet
+    (``key_name`` and ``provider`` come back too); :func:`show_key`,
+    :func:`remove_key` and the key-source functions take it as well."""
+    return call("providers.set_key", name=name, key=key, api=api, key_name=key_name)
 
 
-def show_key(name: str, *, reveal: bool = False, api: Optional[str] = None) -> Dict[str, Any]:
+def show_key(
+    name: str, *, reveal: bool = False, api: Optional[str] = None, key_name: Optional[str] = None
+) -> Dict[str, Any]:
     """Where the provider's (or ``api``'s) key comes from: ``{provider, api,
     own, source, from, key, error, sources, save_to, store, env}``.
     ``sources`` is where it's looked for, in order (the saved key among them),
@@ -82,14 +90,16 @@ def show_key(name: str, *, reveal: bool = False, api: Optional[str] = None) -> D
     Commands run only with ``reveal``. ``save_to`` is where :func:`set_key`
     saves the key; ``store`` is ``{kind, available, locked}`` (``kind`` as
     :func:`set_key`'s ``store``)."""
-    return call("providers.show_key", name=name, reveal=reveal, api=api)
+    return call("providers.show_key", name=name, reveal=reveal, api=api, key_name=key_name)
 
 
-def remove_key(name: str, *, api: Optional[str] = None) -> Dict[str, Any]:
+def remove_key(
+    name: str, *, api: Optional[str] = None, key_name: Optional[str] = None
+) -> Dict[str, Any]:
     """Delete the saved key, from the keychain and any key file (the sources
     ``api_key`` lists, and the config, are left as they are):
     ``{"removed": bool}``."""
-    return call("providers.remove_key", name=name, api=api)
+    return call("providers.remove_key", name=name, api=api, key_name=key_name)
 
 
 def _source(
@@ -114,12 +124,14 @@ def _source(
     return "saved"
 
 
-def key_sources(name: str, *, api: Optional[str] = None) -> Dict[str, Any]:
+def key_sources(
+    name: str, *, api: Optional[str] = None, key_name: Optional[str] = None
+) -> Dict[str, Any]:
     """Where the provider's (or ``api``'s own) key is looked for, in order:
     ``{provider, api, own, sources: [{kind, from, value, implicit?}]}``.
     ``value`` is the ``api_key`` entry as written; the saved key is
     ``implicit`` when the list doesn't place it (it's then last)."""
-    return call("providers.key_sources", name=name, api=api)
+    return call("providers.key_sources", name=name, api=api, key_name=key_name)
 
 
 def add_key_source(
@@ -131,6 +143,7 @@ def add_key_source(
     saved: bool = False,
     first: bool = False,
     api: Optional[str] = None,
+    key_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Add a place to look for the key (exactly one of ``env``, ``file``,
     ``command`` — a list of program and arguments, or one string split like a
@@ -141,6 +154,7 @@ def add_key_source(
         "providers.add_key_source",
         name=name,
         api=api,
+        key_name=key_name,
         first=first,
         source=_source(env, file, command, saved),
     )
@@ -154,6 +168,7 @@ def remove_key_source(
     command: Optional[Any] = None,
     saved: bool = False,
     api: Optional[str] = None,
+    key_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Stop looking in a place for the key (``saved`` takes out only its
     place: the saved key is looked in last again): ``{provider, removed}``."""
@@ -161,8 +176,45 @@ def remove_key_source(
         "providers.remove_key_source",
         name=name,
         api=api,
+        key_name=key_name,
         source=_source(env, file, command, saved),
     )
+
+
+def keys(name: str) -> Dict[str, Any]:
+    """The provider's keys (``lexi providers keys list``): ``{provider,
+    default_key, keys: [{name, default, source, from, error?}]}`` — its
+    unnamed key ``"default"`` first, then its named keys (other accounts'),
+    with where each comes from; ``default`` marks the one requests use when
+    they name none. Never the keys themselves. A request picks one with
+    ``key="work"`` (or ``"openai#work"``); the key functions here take
+    ``key_name="work"``."""
+    return call("providers.keys", name=name)
+
+
+def add_key(name: str, key: str) -> Dict[str, Any]:
+    """Add the named key ``key`` (``lexi providers keys add``): its saved key
+    alone until you save it (:func:`set_key` with ``key_name``) or give it
+    sources (:func:`add_key_source`). ``{provider, key_name, added}``."""
+    return call("providers.add_key", name=name, key=key)
+
+
+def rename_key(name: str, old: str, new: str) -> Dict[str, Any]:
+    """Rename a named key; its saved key and the default go along."""
+    return call("providers.rename_key", name=name, old=old, new=new)
+
+
+def delete_key(name: str, key: str) -> Dict[str, Any]:
+    """Remove the named key ``key`` and its saved key (``lexi providers keys
+    rm``): ``{provider, removed}``."""
+    return call("providers.delete_key", name=name, key=key)
+
+
+def set_default_key(name: str, key: Optional[str]) -> Dict[str, Any]:
+    """Make ``key`` the one the provider's requests use when they name none
+    (``lexi providers keys default``); ``None`` or ``"default"``: its unnamed
+    key."""
+    return call("providers.set_default_key", name=name, key=key)
 
 
 def upgrade(name: str, *, template: Optional[str] = None, apply: bool = False) -> Dict[str, Any]:

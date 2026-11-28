@@ -16,6 +16,8 @@ go under **Unreleased**; at release time that heading becomes the version
 - **Change where a key is looked for from the command line.** `lexi providers api-key source list`, `add` and `rm` (Python: `lexi.providers.key_sources`, `add_key_source`, `remove_key_source`) list the places in order, add an environment variable, a file, a command or the saved key's place, and take them out.
 - **Saving a key no longer edits providers-config.yaml.** The key Lexi saves is always looked in after the places you list (put `saved` in the list to look in it earlier), and saving never writes to a file you listed. Your config is tidied once: Lexi's own key file comes out of the list, and the same key keeps being used.
 
+- **Several accounts at one provider.** Give each account its own named key and choose one per request: `lexi providers api-key set openai#work`, then `lexi respond openai#work "…"` or `--key work` (Python: `key="work"`). `lexi providers keys list|add|rename|rm|default` manage them, and the default key is the one used when a request names none. Background jobs and uploaded files belong to the account that made them, so check or attach them with the same key. Lexi 0.3.0 ignores named keys and uses the provider's unnamed key.
+
 ### Models
 - **See how a provider's model list is fetched.** `lexi models hosted <provider> --schema` (Python: `lexi.models.hosted_schema`) shows the address Lexi asks and the catalog settings it uses: paging, the fields shown, and the rules that turn the listing into tags and limits. It also says whether they come from the provider's template or your providers-config.yaml. Nothing is fetched.
 

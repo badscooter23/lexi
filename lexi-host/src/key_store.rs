@@ -56,11 +56,13 @@ const INTERACTION_NOT_ALLOWED: i32 = 36;
 
 const KEYCHAIN_LOCKED: &str = "it's locked (as it is over SSH until you unlock it): unlock it with `security unlock-keychain`, put the key in an environment variable, or keep saved keys in a file with `lexi config set key_store file`";
 
-/// One saved key: a provider's, or one API's own.
+/// One saved key: a provider's, one API's own, or one of the provider's
+/// named keys (`docs/key-storage-design.md` §11).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Slot {
     pub(crate) provider: String,
     pub(crate) api: Option<String>,
+    pub(crate) key: Option<String>,
 }
 
 impl Slot {
@@ -68,32 +70,54 @@ impl Slot {
         Slot {
             provider: provider.to_string(),
             api: api.map(String::from),
+            key: None,
+        }
+    }
+
+    /// The provider's named key `key`.
+    pub(crate) fn named(provider: &str, key: &str) -> Slot {
+        Slot {
+            provider: provider.to_string(),
+            api: None,
+            key: Some(key.to_string()),
+        }
+    }
+
+    /// The same slot for the provider renamed `provider`.
+    pub(crate) fn for_provider(&self, provider: &str) -> Slot {
+        Slot {
+            provider: provider.to_string(),
+            ..self.clone()
         }
     }
 
     /// Its key file, under `$LEXI_HOME`.
     pub(crate) fn file(&self) -> String {
-        match &self.api {
-            Some(a) => format!("providers/{}/api-key-{a}", self.provider),
-            None => format!("providers/{}/api-key", self.provider),
+        match (&self.key, &self.api) {
+            (Some(k), _) => format!("providers/{}/keys/{k}", self.provider),
+            (None, Some(a)) => format!("providers/{}/api-key-{a}", self.provider),
+            (None, None) => format!("providers/{}/api-key", self.provider),
         }
     }
 
-    /// `anthropic's API key`, `openai's image-generations API key`.
+    /// `anthropic's API key`, `openai's image-generations API key`,
+    /// `openai#work's API key`.
     pub(crate) fn what(&self) -> String {
-        match &self.api {
-            Some(a) => format!("{}'s {a} API key", self.provider),
-            None => format!("{}'s API key", self.provider),
+        match (&self.key, &self.api) {
+            (Some(k), _) => format!("{}#{k}'s API key", self.provider),
+            (None, Some(a)) => format!("{}'s {a} API key", self.provider),
+            (None, None) => format!("{}'s API key", self.provider),
         }
     }
 
     /// The stored item's account: `openai`, `openai/image-generations`,
-    /// with `@<LEXI_HOME>` when that isn't the default `~/.lexi-cli`, so
-    /// separate configs (tests, profiles) never share keys.
+    /// `openai#work`, with `@<LEXI_HOME>` when that isn't the default
+    /// `~/.lexi-cli`, so separate configs (tests, profiles) never share keys.
     fn account(&self, home: &Path) -> String {
-        let mut account = match &self.api {
-            Some(a) => format!("{}/{a}", self.provider),
-            None => self.provider.clone(),
+        let mut account = match (&self.key, &self.api) {
+            (Some(k), _) => format!("{}#{k}", self.provider),
+            (None, Some(a)) => format!("{}/{a}", self.provider),
+            (None, None) => self.provider.clone(),
         };
         let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
         let default = dirs::home_dir().map(|h| canonical(&h.join(".lexi-cli")));
@@ -108,9 +132,10 @@ impl Slot {
     /// The stored item's name, as Keychain Access (the label) or Credential
     /// Manager (the comment) shows it.
     fn label(&self) -> String {
-        match &self.api {
-            Some(a) => format!("Lexi: {} {a} API key", self.provider),
-            None => format!("Lexi: {} API key", self.provider),
+        match (&self.key, &self.api) {
+            (Some(k), _) => format!("Lexi: {}#{k} API key", self.provider),
+            (None, Some(a)) => format!("Lexi: {} {a} API key", self.provider),
+            (None, None) => format!("Lexi: {} API key", self.provider),
         }
     }
 }
@@ -523,10 +548,20 @@ pub(crate) fn write_key_file(path: &Path, key: &str) -> Result<(), HostError> {
 }
 
 /// The saved keys `home`'s key files hold for `providers`, as slots: each
-/// provider's `api-key` and `api-key-<api>` files.
+/// provider's `api-key` and `api-key-<api>` files, and its named keys'
+/// `keys/<name>`.
 pub(crate) fn key_file_slots(home: &Path, providers: &[String]) -> Vec<Slot> {
     let mut out = Vec::new();
     for p in providers {
+        if let Ok(dir) = std::fs::read_dir(home.join("providers").join(p).join("keys")) {
+            let mut names: Vec<String> = dir
+                .filter_map(Result::ok)
+                .filter(|e| e.path().is_file())
+                .filter_map(|e| e.file_name().to_str().map(String::from))
+                .collect();
+            names.sort();
+            out.extend(names.iter().map(|k| Slot::named(p, k)));
+        }
         let Ok(dir) = std::fs::read_dir(home.join("providers").join(p)) else {
             continue;
         };
@@ -730,6 +765,11 @@ mod tests {
         assert_eq!(a.file(), "providers/openai/api-key-image-generations");
         assert_eq!(a.what(), "openai's image-generations API key");
         assert_eq!(p.label(), "Lexi: openai API key");
+        let w = Slot::named("openai", "work");
+        assert_eq!(w.file(), "providers/openai/keys/work");
+        assert_eq!(w.what(), "openai#work's API key");
+        assert_eq!(w.label(), "Lexi: openai#work API key");
+        assert!(w.account(home.path()).starts_with("openai#work@"));
         // A home that isn't ~/.lexi-cli is part of the account.
         let canon = home.path().canonicalize().unwrap();
         assert_eq!(
@@ -769,10 +809,13 @@ mod tests {
         for f in ["api-key", "api-key-image-generations", "model-aliases.yaml"] {
             std::fs::write(dir.join(f), "x").unwrap();
         }
+        std::fs::create_dir_all(dir.join("keys")).unwrap();
+        std::fs::write(dir.join("keys/work"), "x").unwrap();
         let slots = key_file_slots(home.path(), &["openai".into(), "none".into()]);
         assert!(
             slots
                 == vec![
+                    Slot::named("openai", "work"),
                     Slot::new("openai", None),
                     Slot::new("openai", Some("image-generations"))
                 ]

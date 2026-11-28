@@ -38,7 +38,7 @@ pub enum Cmd {
     /// [--out DIR] [--role R] [--stream] [--background [--detach]]
     /// [--image URL|PATH]... [<schema flags>] [--set path=value]...
     /// [--unset path]... [--tool preset[,preset]]... [--params FILE] [--cite]
-    /// [--raw|-r] [--verbose|-v] [--no-validate] [--timeout SECS]
+    /// [--raw|-r] [--verbose|-v] [--no-validate] [--timeout SECS] [--key KEY]
     ///
     /// The words are the prompt (`-` reads stdin); with none, the saved prompt
     /// --prompt NAME, else the active one. The model's tags pick the API;
@@ -51,8 +51,11 @@ pub enum Cmd {
     /// --timeout SECS sets this request's time limit (0 = none) instead of
     /// request_timeout in config.json: the whole wait, or with --stream the
     /// longest silence.
+    ///
+    /// --key KEY (or PROVIDER#KEY) uses one of the provider's named keys
+    /// (`providers keys list`): another account's.
     Respond {
-        /// Provider name, as in providers-config.yaml.
+        /// Provider name, as in providers-config.yaml (PROVIDER#KEY for a named key).
         provider: String,
         /// Prompt name and options (see above).
         #[arg(
@@ -78,11 +81,15 @@ pub enum Cmd {
         /// request_timeout in config.json.
         #[arg(long, value_name = "SECS")]
         timeout: Option<u64>,
+        /// Use this named key of the provider (or write PROVIDER#KEY).
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
     /// Embed texts as vectors (one per text) with a provider's embedding model.
     ///
     /// embed <provider> TEXT... [--file FILE] [-] [--model M] [<schema flags>]
     /// [--set path=value]... [--unset path]... [--no-validate] [--timeout SECS]
+    /// [--key KEY]
     ///
     /// Each argument is one text; --file adds one text per line, `-` reads
     /// lines from stdin. Schema flags (e.g. --dimensions, --input-type) come
@@ -106,6 +113,10 @@ pub enum Cmd {
         provider: String,
         /// Path to the file to upload.
         file: PathBuf,
+        /// Upload with this named key of the provider (or write
+        /// PROVIDER#KEY); a file belongs to that key's account.
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
     /// Check or wait for a background job (`respond --background --detach`).
     Jobs {
@@ -171,7 +182,13 @@ pub enum Cmd {
 #[derive(Debug, Subcommand)]
 pub enum JobsCmd {
     /// Check a job once; prints its result if it has finished.
-    Status { provider: String, id: String },
+    Status {
+        provider: String,
+        id: String,
+        /// The named key the job was started with (or write PROVIDER#KEY).
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
+    },
     /// Wait for a job to finish and print its result.
     Wait {
         provider: String,
@@ -182,6 +199,9 @@ pub enum JobsCmd {
         /// Give up after this many seconds.
         #[arg(long, default_value_t = 600)]
         timeout: u64,
+        /// The named key the job was started with (or write PROVIDER#KEY).
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
 }
 
@@ -284,6 +304,9 @@ pub enum ProvidersCmd {
         /// Print {provider, status, source} as JSON.
         #[arg(short, long)]
         raw: bool,
+        /// Check this named key (or write PROVIDER#KEY).
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
     /// Add a provider.
     Add {
@@ -313,6 +336,12 @@ pub enum ProvidersCmd {
     ApiKey {
         #[command(subcommand)]
         cmd: ApiKeyCmd,
+    },
+    /// A provider's keys for separate accounts: list, add, rename, remove, and
+    /// choose the default. A request picks one with --key KEY or PROVIDER#KEY.
+    Keys {
+        #[command(subcommand)]
+        cmd: KeysCmd,
     },
     /// Manage the APIs a provider offers (its bindings).
     Api {
@@ -369,6 +398,30 @@ pub enum ProviderApiCmd {
 }
 
 #[derive(Debug, Subcommand)]
+pub enum KeysCmd {
+    /// List the provider's keys — `default` (its unnamed key) and its named
+    /// keys — with where each comes from and which one requests use.
+    #[command(visible_alias = "ls")]
+    List { name: String },
+    /// Add a named key (another account's): save it with `providers api-key
+    /// set PROVIDER#KEY`, or give it sources with `providers api-key source
+    /// add PROVIDER#KEY …`.
+    Add { name: String, key: String },
+    /// Rename a named key (its saved key goes along).
+    Rename {
+        name: String,
+        old: String,
+        new: String,
+    },
+    /// Remove a named key and its saved key.
+    #[command(visible_aliases = ["del", "remove"])]
+    Rm { name: String, key: String },
+    /// Show the key requests use when they name none, or set it (`default`:
+    /// the unnamed key).
+    Default { name: String, key: Option<String> },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum ApiKeyCmd {
     /// Save an API key as the provider's saved key (in the OS key store — macOS Keychain, Windows Credential Manager, the Linux desktop keyring — else an owner-only file, providers/<name>/api-key; key_store in config picks), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value.
     Set {
@@ -378,6 +431,9 @@ pub enum ApiKeyCmd {
         /// A key for this API only (one of the provider's APIs); it gets its own api_key.
         #[arg(long)]
         api: Option<String>,
+        /// One of the provider's named keys (or write PROVIDER#KEY).
+        #[arg(long = "name", value_name = "KEY")]
+        key: Option<String>,
     },
     /// Show where the key is looked for, in order (the saved key among them), and the key in use, masked unless --reveal. Commands are run only with --reveal.
     Show {
@@ -387,6 +443,9 @@ pub enum ApiKeyCmd {
         /// The key this API uses.
         #[arg(long)]
         api: Option<String>,
+        /// One of the provider's named keys (or write PROVIDER#KEY).
+        #[arg(long = "name", value_name = "KEY")]
+        key: Option<String>,
     },
     /// Delete the saved key. The sources api_key lists, and the config, are left as they are.
     Remove {
@@ -394,6 +453,9 @@ pub enum ApiKeyCmd {
         /// The API's own key.
         #[arg(long)]
         api: Option<String>,
+        /// One of the provider's named keys (or write PROVIDER#KEY).
+        #[arg(long = "name", value_name = "KEY")]
+        key: Option<String>,
     },
     /// The places a key is looked for: list, add or remove them.
     Source {
@@ -411,6 +473,9 @@ pub enum KeySourceCmd {
         /// The sources of this API's own key.
         #[arg(long)]
         api: Option<String>,
+        /// One of the provider's named keys (or write PROVIDER#KEY).
+        #[arg(long = "name", value_name = "KEY")]
+        key: Option<String>,
     },
     /// Add a place to look for the key: at the end of api_key, or first with --first (one already listed moves there). Lexi never writes to it.
     Add {
@@ -423,6 +488,9 @@ pub enum KeySourceCmd {
         /// For this API only (it gets its own api_key).
         #[arg(long)]
         api: Option<String>,
+        /// One of the provider's named keys (or write PROVIDER#KEY).
+        #[arg(long = "name", value_name = "KEY")]
+        key: Option<String>,
     },
     /// Stop looking in a place for the key (--saved takes out only its place in the list: the saved key is looked in last again).
     #[command(visible_aliases = ["del", "remove"])]
@@ -433,6 +501,9 @@ pub enum KeySourceCmd {
         /// From this API's own api_key.
         #[arg(long)]
         api: Option<String>,
+        /// One of the provider's named keys (or write PROVIDER#KEY).
+        #[arg(long = "name", value_name = "KEY")]
+        key: Option<String>,
     },
 }
 
@@ -511,6 +582,9 @@ pub enum ModelsCmd {
         /// providers-config.yaml.
         #[arg(long, conflicts_with_all = ["table", "tags", "cached"])]
         schema: bool,
+        /// List what this named key's account sees (or write PROVIDER#KEY).
+        #[arg(long, value_name = "KEY")]
+        key: Option<String>,
     },
     /// Show a provider's default model for each kind, or set one.
     ///

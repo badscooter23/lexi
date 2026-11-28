@@ -236,7 +236,9 @@ fn metadata_lines(meta: &Map<String, Value>, activity: &str) -> Vec<String> {
     lines
 }
 
-pub(crate) async fn respond(io: &mut Io<'_>, provider: &str, args: &[String]) -> u8 {
+/// `respond` for `provider`; `label` is how to name it back (`openai#work`
+/// when a named key was chosen — the caller runs this with that key).
+pub(crate) async fn respond(io: &mut Io<'_>, provider: &str, label: &str, args: &[String]) -> u8 {
     // `--json` is global, but after the provider it lands in this free-form
     // argument list; honor it wherever it appears.
     let mut args: Vec<String> = args.to_vec();
@@ -304,11 +306,12 @@ pub(crate) async fn respond(io: &mut Io<'_>, provider: &str, args: &[String]) ->
             Ok(st) => {
                 let id = crate::output::scalar(st.operation.get("id"));
                 let state = crate::output::scalar(st.operation.get("state"));
+                // A job belongs to the account that made it: name the key.
                 let human = format!(
-                    "Submitted job {id} ({state}).\nCheck it with: lexi jobs status {provider} {id}\n\
-                     Wait for it with: lexi jobs wait {provider} {id}"
+                    "Submitted job {id} ({state}).\nCheck it with: lexi jobs status {label} {id}\n\
+                     Wait for it with: lexi jobs wait {label} {id}"
                 );
-                io.result(human, st.to_value(provider))
+                io.result(human, st.to_value(label))
             }
             Err(e) => io.fail(e),
         };

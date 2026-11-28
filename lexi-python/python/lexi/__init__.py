@@ -73,6 +73,7 @@ def _opts(
     output: Optional[str] = None,
     out_dir: Optional[Union[str, "os.PathLike[str]"]] = None,
     timeout: Optional[int] = None,
+    key: Optional[str] = None,
 ) -> Dict[str, Any]:
     opts: Dict[str, Any] = {
         "text": text,
@@ -92,6 +93,7 @@ def _opts(
         "output": output,
         "out_dir": os.fspath(out_dir) if out_dir is not None else None,
         "timeout": _timeout(timeout),
+        "key": key,
     }
     return {k: v for k, v in opts.items() if v is not None}
 
@@ -123,6 +125,7 @@ def respond(
     output: Optional[str] = None,
     out_dir: Union[str, "os.PathLike[str]"] = ".",
     timeout: Optional[int] = None,
+    key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Send a prompt and wait for the reply (``lexi respond``).
 
@@ -146,6 +149,9 @@ def respond(
     * ``timeout`` — this request's time limit in seconds (0 = none), instead
       of ``request_timeout`` in config.json: the whole wait (for a stream, the
       longest silence). Raises :class:`LexiError` when it runs out.
+    * ``key`` — one of the provider's named keys (another account's; see
+      :func:`lexi.providers.keys`), or write ``provider`` as
+      ``"openai#work"``. ``"default"`` is its unnamed key.
 
     Returns ``{"provider", "model", "api", "text", "artifacts": [{path, type,
     media_type, revised_prompt}], "metadata", "activity"?, "sources"?, "raw"?}``
@@ -153,7 +159,7 @@ def respond(
     response with ``raw``.
     """
     o = _opts(text, prompt, role, model, images, params, tools, set, unset, validate, cite, raw,
-              output, out_dir, timeout)
+              output, out_dir, timeout, key)
     return _lexi._respond(provider, o, background)
 
 
@@ -175,6 +181,7 @@ def stream(
     output: Optional[str] = None,
     out_dir: Union[str, "os.PathLike[str]"] = ".",
     timeout: Optional[int] = None,
+    key: Optional[str] = None,
 ) -> Iterator[Dict[str, Any]]:
     """Send a prompt and stream the reply (``lexi respond --stream --json``).
 
@@ -192,7 +199,7 @@ def stream(
     is called; ``close()`` the iterator (or drop it) to stop early.
     """
     o = _opts(text, prompt, role, model, images, params, tools, set, unset, validate, cite, raw,
-              output, out_dir, timeout)
+              output, out_dir, timeout, key)
     return _lexi._stream(provider, o)
 
 
@@ -209,15 +216,19 @@ def submit(
     set: Optional[SetPaths] = None,
     unset: Optional[Iterable[str]] = None,
     validate: bool = True,
+    key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Submit a prompt as a background job and return at once
     (``lexi respond --background --detach``).
 
     Returns the operation ``{"id", "status", "state", "done", "provider"}``;
     follow it with :func:`lexi.jobs.status` or :func:`lexi.jobs.wait`. Needs an
-    API with a background lifecycle (e.g. OpenAI's Responses API).
+    API with a background lifecycle (e.g. OpenAI's Responses API). A job
+    belongs to its key's account: with ``key``, the operation's ``provider``
+    is ``"openai#work"``, which the jobs functions take as it is.
     """
-    o = _opts(text, prompt, role, model, images, params, tools, set, unset, validate, False, False)
+    o = _opts(text, prompt, role, model, images, params, tools, set, unset, validate, False, False,
+              key=key)
     return _lexi._submit(provider, o)
 
 
@@ -235,6 +246,7 @@ def prepare(
     unset: Optional[Iterable[str]] = None,
     validate: bool = True,
     mode: str = "buffered",
+    key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Resolve the model and compose the request body without sending it.
 
@@ -242,7 +254,8 @@ def prepare(
     ``"stream"`` or ``"background"``. Returns ``{"provider", "model", "body"}``.
     Needs the provider's API key to be configured, but makes no network call.
     """
-    o = _opts(text, prompt, role, model, images, params, tools, set, unset, validate, False, False)
+    o = _opts(text, prompt, role, model, images, params, tools, set, unset, validate, False, False,
+              key=key)
     return _lexi._prepare(provider, o, mode)
 
 
@@ -257,8 +270,8 @@ def generate(
     """Generate images: :func:`respond` with ``output="image"`` (``lexi
     generate``). Images are saved under ``out_dir``; returns the
     :func:`respond` result — ``result["artifacts"]`` lists the files. Other
-    keyword arguments (``set={"size": "1024x1024"}``, ``timeout=600``, …)
-    pass through.
+    keyword arguments (``set={"size": "1024x1024"}``, ``timeout=600``,
+    ``key="work"``, …) pass through.
     """
     return respond(provider, prompt, model=model, output="image", out_dir=out_dir, **options)
 
@@ -273,12 +286,14 @@ def embed(
     unset: Optional[Iterable[str]] = None,
     validate: bool = True,
     timeout: Optional[int] = None,
+    key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Embed texts as vectors, one per text (``lexi embed``).
 
     ``model`` defaults to the provider's embedding model. API options go in
     ``set`` (``{"dimensions": 256}``, NVIDIA's ``{"input_type": "passage"}``).
-    ``timeout`` is this request's time limit in seconds (0 = none).
+    ``timeout`` is this request's time limit in seconds (0 = none); ``key``
+    one of the provider's named keys (or ``"openai#work"``).
     Returns ``{"provider", "model", "api", "count", "dimensions",
     "embeddings": [[float, …], …], "metadata"}``.
     """
@@ -294,6 +309,8 @@ def embed(
         o["unset"] = [*unset]
     if timeout is not None:
         o["timeout"] = _timeout(timeout)
+    if key is not None:
+        o["key"] = key
     return _lexi._embed(provider, o)
 
 
@@ -303,13 +320,17 @@ def tags() -> Dict[str, Any]:
     return _lexi._admin("tags.vocabulary", {})
 
 
-def upload(provider: str, path: Union[str, "os.PathLike[str]"]) -> Dict[str, Any]:
+def upload(
+    provider: str, path: Union[str, "os.PathLike[str]"], *, key: Optional[str] = None
+) -> Dict[str, Any]:
     """Upload a file to the provider (``lexi upload``).
 
     Returns ``{"provider", "file_id"}``; pass ``f"file:{file_id}"`` in
-    ``images=`` to use an uploaded image.
+    ``images=`` to use an uploaded image. A file belongs to the account of
+    the key that uploaded it (``key``, or ``"openai#work"``): use the same
+    key for requests that attach it.
     """
-    return _lexi._upload(provider, os.fspath(path))
+    return _lexi._upload(provider, os.fspath(path), key)
 
 
 # The admin namespaces (``lexi providers`` / ``models`` / ``prompts`` /

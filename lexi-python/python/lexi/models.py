@@ -15,13 +15,18 @@ def list(provider: str) -> List[Dict[str, Any]]:
 
 
 def hosted(
-    provider: str, *, tags: Iterable[str] = (), cached: bool = False
+    provider: str,
+    *,
+    tags: Iterable[str] = (),
+    cached: bool = False,
+    key: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """The models the provider's API lists, each with Lexi's ``kind``, ``api``
     and ``tags`` added. A network call that also refreshes the local catalog
     cache (which classification reads); ``cached=True`` reads the cache
-    instead. ``tags=["out:image"]`` keeps models having all of them."""
-    return call("models.hosted", provider=provider, tags=[*tags], cached=cached)
+    instead. ``tags=["out:image"]`` keeps models having all of them. ``key``
+    (or ``"openai#work"``) lists what that named key's account sees."""
+    return call("models.hosted", provider=provider, tags=[*tags], cached=cached, key=key)
 
 
 def hosted_schema(provider: str) -> Dict[str, Any]:

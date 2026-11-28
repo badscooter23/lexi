@@ -114,8 +114,10 @@ fn mask(key: &str) -> String {
     }
 }
 
-/// A provider's (or, with `api`, one API's) API key: `{provider, api, own,
-/// source, from, key, error, sources, save_to, store, env}`.
+/// A provider's (with `api`, one API's; as `provider#key`, one named key's)
+/// API key: `{provider, api, key_name, own, source, from, key, error,
+/// sources, save_to, store, env}` — `key_name` is the named key's name (null
+/// for the unnamed one).
 /// - `sources`: where it's looked for, in order — its `api_key` list with the
 ///   saved key in its place — each `{kind, from, state, note?}` (`kind`:
 ///   `env`, `file`, `command`, `saved`, `config`; `state`: `used`,
@@ -132,7 +134,8 @@ fn mask(key: &str) -> String {
 ///   because the store is locked.
 /// - `env`: the first environment variable the list reads, if any.
 pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value, HostError> {
-    provider_config(name)?;
+    let (provider, key) = config::split_key_arg(name, None)?;
+    provider_config(&provider)?;
     let plan = config::key_plan(name, api, reveal)?;
     let lookup = &plan.lookup;
     let used = lookup.source();
@@ -141,8 +144,9 @@ pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value
         _ => None,
     });
     Ok(json!({
-        "provider": name,
+        "provider": provider,
         "api": api,
+        "key_name": key.filter(|k| k != config::DEFAULT_KEY),
         "own": plan.own,
         "source": used.map(Source::kind),
         "from": used.map(Source::describe),

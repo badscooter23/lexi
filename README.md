@@ -123,7 +123,9 @@ Manager or the Linux desktop keyring (elsewhere, an owner-only file under
 `~/.lexi-cli/providers/<provider>/`) — never in `providers-config.yaml`; `providers api-key show <provider>` lists
 where Lexi looked and which key is used. Files of your own and password
 managers (`command: [op, read, …]`) can be added with
-`providers api-key source add` — see
+`providers api-key source add`. Several accounts at one provider each get a
+**named key** — `lexi respond openai#work "…"` or `--key work` (`providers
+keys list|add|rename|rm|default`) — see
 [Getting Started](docs/getting-started.md#where-a-key-comes-from). The CLI, the desktop app and the
 Python library all read the same places.
 

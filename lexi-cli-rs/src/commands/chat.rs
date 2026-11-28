@@ -9,6 +9,7 @@ use crate::output::Io;
 pub(crate) async fn generate(
     io: &mut Io<'_>,
     provider: String,
+    label: String,
     prompt: String,
     model: Option<String>,
     out: std::path::PathBuf,
@@ -24,12 +25,19 @@ pub(crate) async fn generate(
     if let Some(m) = model {
         args.extend(["--model".into(), m]);
     }
-    super::respond::respond(io, &provider, &args).await
+    super::respond::respond(io, &provider, &label, &args).await
 }
 
-pub(crate) async fn upload(io: &mut Io<'_>, provider: String, file: std::path::PathBuf) -> u8 {
+/// Upload a file (with the key the caller chose: file ids belong to an
+/// account, so later requests that attach it should use the same key).
+pub(crate) async fn upload(
+    io: &mut Io<'_>,
+    provider: String,
+    label: String,
+    file: std::path::PathBuf,
+) -> u8 {
     match lexi_host::upload_file(&provider, &file).await {
-        Ok(id) => io.result(&id, json!({ "provider": provider, "file_id": id })),
+        Ok(id) => io.result(&id, json!({ "provider": label, "file_id": id })),
         Err(e) => io.fail(e),
     }
 }
