@@ -119,6 +119,8 @@ impl Slot {
 enum Backend {
     File,
     /// The macOS keychain: the login keychain, or (tests) this keychain file.
+    /// (Only made on macOS; elsewhere its code is never reached.)
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Keychain(Option<PathBuf>),
     /// Windows Credential Manager, or the Secret Service (Linux).
     #[cfg(any(windows, target_os = "linux"))]
