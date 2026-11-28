@@ -795,37 +795,24 @@
     .key-view-state::before { content: "● "; }
     .key-view-state.clear { color: var(--warning, #f59e0b); }
     .key-sources .src-rm { margin-left: 8px; font-size: 0.8rem; }
-    .key-tabs {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 14px;
-      border-bottom: 1px solid var(--border);
-    }
-    .key-tab {
-      padding: 6px 12px;
-      border-radius: 10px 10px 0 0;
-      border: 1px solid var(--border);
-      border-bottom: none;
-      background: var(--input-bg);
-      color: var(--muted);
-      font: inherit;
-      font-size: 0.9rem;
-      cursor: pointer;
-    }
-    .key-tab.active { color: var(--text); background: var(--card); font-weight: 600; }
-    .key-tab .key-star { color: var(--accent-2); margin-left: 4px; }
-    .key-tab.key-add { background: none; border-style: dashed; }
-    .key-tab-actions {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 10px;
-      margin-top: 8px;
-      font-size: 0.88rem;
-      color: var(--muted);
-    }
-    .key-tab-actions:empty { display: none; }
+    .key-table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.9rem; }
+    .key-table th { text-align: left; font-weight: 600; color: var(--muted); font-size: 0.8rem; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    .key-table td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .key-table tr:last-child td { border-bottom: none; }
+    .key-table .key-name code { font-size: 0.92rem; }
+    .key-table .key-from { color: var(--muted); font-size: 0.84rem; overflow-wrap: anywhere; }
+    .key-table .key-actions { text-align: right; white-space: nowrap; }
+    .key-table .key-actions > * { margin-left: 4px; }
+    .key-state { font-size: 0.84rem; color: var(--muted); }
+    .key-state.ok { color: var(--success); }
+    .key-state.bad { color: var(--danger); }
+    .key-default-badge { font-size: 0.82rem; font-weight: 600; color: var(--accent-2); padding: 0 6px; }
+    .btn.btn-sm { padding: 4px 10px; font-size: 0.82rem; }
+    .key-list-empty { margin-top: 12px; color: var(--muted); font-size: 0.9rem; }
+    .key-edit .key-edit-head { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+    .key-edit .key-edit-head > span { font-weight: 600; margin-right: auto; }
+    .key-edit .key-row { display: flex; align-items: center; gap: 6px; }
+    .key-edit .key-row input { flex: 1; }
     .key-variable { margin-top: 10px; font-size: 0.88rem; color: var(--muted); }
     .key-variable:empty { display: none; }
     .api-key-box {
@@ -2316,9 +2303,12 @@
         <div id="providerTable"></div>
       </section>
       <section class="panel api-key-panel">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
-          <h2 style="margin:0;">API Key Management</h2>
-          <button class="btn btn-primary" id="apiKeyWizardBtn" data-cmd="key-set" type="button" data-tip="Step-by-step help getting a key from a provider and adding it to Lexi">Setup Wizard…</button>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+          <h2 style="margin:0;">API Keys</h2>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-primary" id="apiKeyAddBtn" data-cmd="key-add" type="button" data-tip="Add a key, with a name: for another project or account with this provider">+ Add Key</button>
+            <button class="btn btn-ghost" id="apiKeyWizardBtn" data-cmd="key-set" type="button" data-tip="Step-by-step help getting a key from a provider and adding it to Lexi">Setup Wizard…</button>
+          </div>
         </div>
         <div class="field-row">
           <label style="margin:0; white-space:nowrap;">Provider:</label>
@@ -2326,25 +2316,7 @@
         </div>
         <div class="key-variable" id="apiKeyVariable"></div>
         <div class="pane-notice warn" id="apiKeyFinderNote"></div>
-        <div class="key-tabs" id="apiKeyTabs" role="tablist" aria-label="Keys"></div>
-        <div class="key-tab-actions" id="apiKeyTabActions"></div>
-        <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-top:10px;">
-          <span>Current API Key</span>
-          <button class="btn btn-ghost" id="apiKeyRevealBtn" data-cmd="key-show" type="button" disabled data-tip="Show the key in clear text">Show Key</button>
-          <button class="btn btn-ghost" id="apiKeyTestBtn" data-cmd="key-test" type="button" disabled data-tip="Ask the provider whether it accepts this key (lists its models; nothing is generated or billed)">Test</button>
-          <button class="btn btn-danger" id="apiKeyRemoveBtn" data-cmd="key-remove" type="button" disabled data-tip="Delete the saved API key for this provider (providers-config.yaml is left as it is)">Remove</button>
-        </div>
-        <div class="api-key-status api-key-box" id="apiKeyStatus"></div>
-        <div class="key-view-state" id="apiKeyViewState" hidden></div>
-        <div class="key-sources" id="apiKeySource"></div>
-        <div class="btn-row" style="margin-top:4px;">
-          <button class="btn btn-ghost" id="apiKeySourceAddBtn" data-cmd="key-source-add" type="button" disabled data-tip="Add a place to look for this key: an environment variable, a file, or a command such as a password manager's">Add Source…</button>
-        </div>
-        <label for="apiKeyInput">New API Key</label>
-        <input type="password" id="apiKeyInput" placeholder="Paste an API key…" autocomplete="off" spellcheck="false">
-        <div class="btn-row">
-          <button class="btn btn-primary" id="apiKeySaveBtn" data-cmd="key-set" data-tip="Save this key for the selected provider">Save</button>
-        </div>
+        <div class="key-list" id="apiKeyList"></div>
       </section>
     </div>
     <div class="content" id="tab-models">
@@ -2587,26 +2559,10 @@
     const generateResponseBtn = document.getElementById('generateResponseBtn');
     const providerTableEl = document.getElementById('providerTable');
     const apiKeyProviderEl = document.getElementById('apiKeyProvider');
-    const apiKeyInputEl = document.getElementById('apiKeyInput');
-    const apiKeyStatusEl = document.getElementById('apiKeyStatus');
-    const apiKeySaveBtn = document.getElementById('apiKeySaveBtn');
-    const apiKeyRevealBtn = document.getElementById('apiKeyRevealBtn');
-    const apiKeyViewStateEl = document.getElementById('apiKeyViewState');
-    const apiKeyRemoveBtn = document.getElementById('apiKeyRemoveBtn');
-    let apiKeyRevealed = false;
-    // The key panel's open key tab (null: the unnamed key) and the provider's keys.
+    // The key a key pop-up or row button works on (`""` the unnamed key;
+    // null: none), and the provider's keys.
     let apiKeyName = null;
     let apiKeyList = null;
-    function setApiKeyRevealed(value) {
-      apiKeyRevealed = !!value;
-      // The button says what a click does; the label under the key says
-      // how it's shown now.
-      apiKeyRevealBtn.textContent = apiKeyRevealed ? 'Hide Key' : 'Show Key';
-      apiKeyRevealBtn.dataset.tip = apiKeyRevealed ? 'Redact the key again' : 'Show the key in clear text';
-      apiKeyViewStateEl.textContent = apiKeyRevealed ? 'Shown in clear text' : 'Redacted';
-      apiKeyViewStateEl.classList.toggle('clear', apiKeyRevealed);
-    }
-    setApiKeyRevealed(false);
     let PROVIDERS = [];
     let CHAT_PROVIDERS = [];  // the providers that can chat (the Chat tab lists only these)
     let providerConfigured = {};
@@ -3688,9 +3644,7 @@
     initPromptResize('chatResizeBar', 'chatPromptSection', 'tab-chat');
     initPromptResize('imgResizeBar', 'imgPromptSection', 'tab-images');
 
-    // --- API Key Management ---
-    const apiKeyTestBtn = document.getElementById('apiKeyTestBtn');
-    const apiKeySourceEl = document.getElementById('apiKeySource');
+    // --- API Keys ---
 
     // Where a provider's key comes from, in words (`p` is a credentials row
     // from /api/startup or /api/providers/api-key: `source` is the kind of
@@ -3768,68 +3722,34 @@
       });
       if (!PROVIDERS.length) return;
       const next = PROVIDERS.includes(previous) ? previous : PROVIDERS[0];
-      if (next !== previous) apiKeyName = null;
       apiKeyProviderEl.value = next;
       fetchApiKeyStatus(next);
     }
 
-    // The panel's keys (docs/key-storage-design.md §12.6): one tab per key,
-    // labelled the way you'd write it after the provider — `#work`, and `#`
-    // for a key saved before keys had names. `apiKeyName` is the open tab's
-    // key (`""` the unnamed one; null when the provider has none);
-    // `apiKeyList` the provider's keys (config::key_names), both declared
-    // above.
-    const apiKeyTabsEl = document.getElementById('apiKeyTabs');
-    const apiKeyTabActionsEl = document.getElementById('apiKeyTabActions');
-    const apiKeySourceAddBtn = document.getElementById('apiKeySourceAddBtn');
+    // The panel's keys (docs/key-storage-design.md §12.6): a list, one row per
+    // key — `#work` (`#` a key saved before keys had names), ★ the default,
+    // where its key comes from — with Default / Test / Edit… / Delete on each.
+    // Adding and editing a key happen in pop-ups. `apiKeyList` is the
+    // provider's keys (config::key_names); `apiKeyName` the key a pop-up or
+    // row button is working on (`""` the unnamed one).
+    const apiKeyListEl = document.getElementById('apiKeyList');
     const apiKeyFinderNoteEl = document.getElementById('apiKeyFinderNote');
     const apiKeyVariableEl = document.getElementById('apiKeyVariable');
-    // `openai#work` (`openai#` the unnamed key); the provider alone when no
-    // key is open.
+    // `openai#work` (`openai#` the unnamed key); the provider alone for none.
     const keyTarget = (provider, key) => (key === null || key === undefined ? provider : `${provider}#${key}`);
-    // The panel's key as words: "openai#work".
     const keyWords = (provider, key) => keyTarget(provider, key);
     const KEY_NAME_RE = /^[A-Za-z0-9_-]{1,32}$/;
-    // The panel's key for the >_ help: `openai#work`, or `openai#NAME` when
-    // no key is open (a key needs a name).
-    const panelTarget = () => {
+    // The >_ help's key: a row's (`data-key`), else the pop-up's, else NAME.
+    const panelTarget = (el) => {
       const p = apiKeyProviderEl.value || 'PROVIDER';
-      return apiKeyName === null ? `${p}#NAME` : `${p}#${apiKeyName}`;
+      const k = el && el.dataset && el.dataset.key !== undefined ? el.dataset.key : apiKeyName;
+      return k === null || k === undefined ? `${p}#NAME` : `${p}#${k}`;
     };
     const panelArg = (t) => shq(t);
     const keyNames = () => ((apiKeyList && apiKeyList.keys) || []).map((k) => k.name);
+    const keyRow = (name) => ((apiKeyList && apiKeyList.keys) || []).find((k) => k.name === name);
 
-    function renderKeyTabs(provider) {
-      const keys = (apiKeyList && apiKeyList.keys) || [];
-      apiKeyTabsEl.innerHTML = keys.map((k) => {
-        const what = k.name === ''
-          ? `The unnamed key (${provider}#), saved before keys had names. Rename it to give it one`
-          : `The key ${provider}#${k.name}`;
-        const tip = `${what}${k.default ? '. Requests that name no key use it' : ''}${k.source ? '' : '. No key found yet'}`;
-        const open = k.name === apiKeyName;
-        return `<button type="button" role="tab" class="key-tab${open ? ' active' : ''}" aria-selected="${open}"
-          data-key="${esc(k.name)}" data-cmd="key-tab" data-tip="${esc(tip)}">${esc(k.label || `#${k.name}`)}${k.default ? '<span class="key-star" aria-label="used by default">★</span>' : ''}</button>`;
-      }).join('') + '<button type="button" class="key-tab key-add" id="apiKeyAddBtn" data-cmd="key-add" data-tip="Add a key: for another project or account with this provider">+ Add Key</button>';
-      const cur = keys.find((k) => k.name === apiKeyName);
-      const actions = [];
-      if (!cur) {
-        actions.push(`<span>Not ready: ${esc(provider)} has no key yet. Add one with <strong>+ Add Key</strong>${apiKeyList && apiKeyList.variable ? `, or set $${esc(apiKeyList.variable.name)}` : ''}.</span>`);
-      } else {
-        if (keys.length > 1) {
-          actions.push(cur.default
-            ? '<span>★ Used when a request names no key.</span>'
-            : '<button type="button" class="btn btn-ghost" id="apiKeyDefaultBtn" data-cmd="key-default" data-tip="Use this key when a request names none">Use by Default</button>');
-        }
-        actions.push(`<button type="button" class="btn btn-ghost" id="apiKeyRenameBtn" data-cmd="key-rename" data-tip="${cur.name === '' ? 'Give this key a name' : 'Rename this key (its sources and saved key go along)'}">${cur.name === '' ? 'Name…' : 'Rename…'}</button>`);
-        actions.push('<button type="button" class="btn btn-danger" id="apiKeyDeleteBtn" data-cmd="key-delete" data-tip="Remove this key and its saved value">Delete Key</button>');
-        if (keys.length > 1 && !keys.some((k) => k.default)) {
-          actions.push('<span class="warn-text">No default: a request has to name a key until you choose one.</span>');
-        }
-      }
-      apiKeyTabActionsEl.innerHTML = actions.join('');
-    }
-
-    // The provider's variable, above the tabs: whether it's set (when it is,
+    // The provider's variable, above the list: whether it's set (when it is,
     // a request that names no key uses it), and the Finder hint when Lexi
     // can't see a shell profile's variables.
     function renderVariable(list) {
@@ -3843,83 +3763,63 @@
         : '';
     }
 
-    let apiKeyInfo = null;
-    async function fetchApiKeyStatus(provider) {
-      apiKeyStatusEl.textContent = 'Checking…';
-      apiKeySourceEl.innerHTML = '';
-      apiKeyRevealBtn.disabled = true;
-      apiKeyTestBtn.disabled = true;
-      apiKeyRemoveBtn.disabled = true;
-      apiKeyViewStateEl.hidden = true;
-      apiKeySourceAddBtn.disabled = true;
-      try {
-        apiKeyList = await api('/api/providers/keys', { method: 'POST', body: JSON.stringify({ action: 'list', provider }) });
-        if (apiKeyProviderEl.value !== provider) return;
-        // Open the key asked for, else the default, else the first.
-        const names = keyNames();
-        if (apiKeyName === null || !names.includes(apiKeyName)) {
-          apiKeyName = names.includes(apiKeyList.default_key) ? apiKeyList.default_key : (names[0] ?? null);
-        }
-        renderKeyTabs(provider);
-        renderVariable(apiKeyList);
-        apiKeySaveBtn.textContent = apiKeyName === null ? 'Add Key…' : 'Save';
-        if (apiKeyName === null) {
-          apiKeyInfo = null;
-          apiKeyStatusEl.textContent = 'No key.';
-          apiKeySaveBtn.dataset.tip = 'Add a key with this value (it needs a name)';
-          return;
-        }
-        const key = apiKeyName;
-        const data = await api('/api/providers/api-key', {
-          method: 'POST',
-          body: JSON.stringify({ action: 'show', provider, key, reveal: apiKeyRevealed }),
-        });
-        if (apiKeyProviderEl.value !== provider || apiKeyName !== key) return;
-        apiKeyInfo = data;
-        const hasKey = !!data.source;
-        apiKeyStatusEl.textContent = data.error ? `Couldn't read the key: ${data.error}`
-          : !hasKey ? 'No API key found.'
-          : data.key;
-        apiKeySourceEl.innerHTML = keySourcesHtml(data, true);
-        apiKeySaveBtn.dataset.tip = `Save this as ${keyTarget(provider, key)}'s key, ${storePhrase(data)}`;
-        apiKeyRevealBtn.disabled = !hasKey;
-        apiKeyTestBtn.disabled = !hasKey;
-        apiKeyViewStateEl.hidden = !hasKey || !!data.error;
-        apiKeySourceAddBtn.disabled = false;
-        // Remove deletes the saved key, when there is one.
-        const savedSource = (data.sources || []).find((x) => x.kind === 'saved');
-        apiKeyRemoveBtn.disabled = !savedSource || savedSource.state === 'missing';
-      } catch (err) {
-        apiKeyStatusEl.textContent = 'No API key.';
-        apiKeySourceEl.textContent = err.message;
+    function renderKeyList(provider) {
+      const keys = (apiKeyList && apiKeyList.keys) || [];
+      if (!keys.length) {
+        const v = apiKeyList && apiKeyList.variable;
+        apiKeyListEl.innerHTML = `<div class="key-list-empty">No keys yet: ${esc(provider)} isn't ready${v && v.set ? ` unless a request uses <code>$${esc(v.name)}</code>` : ''}. Add one with <strong>+ Add Key</strong>${v ? `, or set <code>$${esc(v.name)}</code>` : ''}.</div>`;
+        return;
       }
+      const several = keys.length > 1;
+      const rows = keys.map((k) => {
+        const unnamed = k.name === '';
+        const state = k.error ? `<span class="key-state bad" data-tip="${esc(k.error)}">Can't read it</span>`
+          : k.source ? '<span class="key-state ok">Key found</span>'
+            : '<span class="key-state">No key yet</span>';
+        const from = k.error ? '' : esc(k.from || '—');
+        const def = k.default
+          ? `<span class="key-default-badge" data-tip="Requests that name no key use this one${apiKeyList.variable && apiKeyList.variable.set ? ` (when $${esc(apiKeyList.variable.name)} isn't set)` : ''}">★ Default</span>`
+          : `<button type="button" class="btn btn-ghost btn-sm key-act" data-act="default" data-key="${esc(k.name)}" data-cmd="key-default" data-tip="Make ${esc(provider)}${esc(k.label)} the default: the key requests use when they name none">Make Default</button>`;
+        return `<tr>
+          <td class="key-name"><code>${esc(k.label || `#${k.name}`)}</code>${unnamed ? ' <span class="muted" data-tip="Saved before keys had names. Edit it to give it a name.">(no name)</span>' : ''}</td>
+          <td class="key-from">${from}</td>
+          <td>${state}</td>
+          <td class="key-actions">
+            ${several || !k.default ? def : '<span class="key-default-badge" data-tip="The only key: requests that name no key use it">★ Default</span>'}
+            <button type="button" class="btn btn-ghost btn-sm key-act" data-act="test" data-key="${esc(k.name)}" data-cmd="key-test" ${k.source ? '' : 'disabled'} data-tip="Ask ${esc(provider)} whether it accepts this key (lists its models; nothing is generated or billed)">Test</button>
+            <button type="button" class="btn btn-ghost btn-sm key-act" data-act="edit" data-key="${esc(k.name)}" data-cmd="key-edit" data-tip="Change this key: its value, ${unnamed ? 'give it a name' : 'its name'}, and where Lexi looks for it">Edit…</button>
+            <button type="button" class="btn btn-danger btn-sm key-act" data-act="delete" data-key="${esc(k.name)}" data-cmd="key-delete" data-tip="Remove this key and its saved value">Delete</button>
+          </td></tr>`;
+      }).join('');
+      const note = several && !keys.some((k) => k.default)
+        ? '<div class="warn-text" style="margin-top:6px;">No default: a request has to name a key until you make one the default.</div>' : '';
+      apiKeyListEl.innerHTML = `<table class="key-table"><thead><tr><th>Key</th><th>Comes from</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>${note}`;
     }
 
-    function openKeyTab(name) {
-      apiKeyName = name;
-      setApiKeyRevealed(false);
-      apiKeyInputEl.value = '';
-      if (apiKeyProviderEl.value) fetchApiKeyStatus(apiKeyProviderEl.value);
+    async function fetchApiKeyStatus(provider) {
+      apiKeyListEl.innerHTML = '<div class="muted">Checking…</div>';
+      try {
+        const list = await api('/api/providers/keys', { method: 'POST', body: JSON.stringify({ action: 'list', provider }) });
+        if (apiKeyProviderEl.value !== provider) return;
+        apiKeyList = list;
+        renderVariable(list);
+        renderKeyList(provider);
+      } catch (err) {
+        apiKeyListEl.innerHTML = `<div class="warn-text">${esc(err.message)}</div>`;
+      }
     }
 
     apiKeyProviderEl.addEventListener('change', () => {
       const provider = apiKeyProviderEl.value;
       apiKeyName = null;
-      setApiKeyRevealed(false);
       if (provider) fetchApiKeyStatus(provider);
     });
 
-    apiKeyRevealBtn.addEventListener('click', () => {
-      const provider = apiKeyProviderEl.value;
-      setApiKeyRevealed(!apiKeyRevealed);
-      if (provider) fetchApiKeyStatus(provider);
-    });
-
-    // One call for the panel's open key: `body` plus the provider and key.
-    function keyCall(action, body = {}) {
+    // One call for key `name` (`body` plus the provider and key).
+    function keyCall(action, body = {}, name = apiKeyName) {
       return api('/api/providers/api-key', {
         method: 'POST',
-        body: JSON.stringify({ action, provider: apiKeyProviderEl.value, key: apiKeyName ?? undefined, ...body }),
+        body: JSON.stringify({ action, provider: apiKeyProviderEl.value, key: name ?? undefined, ...body }),
       });
     }
     function keysCall(action, body = {}) {
@@ -3929,75 +3829,33 @@
       });
     }
 
-    apiKeySaveBtn.addEventListener('click', async () => {
-      const provider = apiKeyProviderEl.value;
-      const value = apiKeyInputEl.value.trim();
-      if (!provider) return;
-      // No key yet: a key needs a name, so add one (with this value).
-      if (apiKeyName === null) { addNamedKey(value); return; }
-      if (!value) {
-        setStatus('Paste an API key first.', 'error');
-        return;
-      }
-      try {
-        const data = await keyCall('set', { value });
-        setStatus(`Saved the API key for ${keyWords(provider, apiKeyName)} ${storePhrase(data)}.${shadowNote(data)}`, data.used && data.used !== data.location ? 'warn' : 'success');
-        apiKeyInputEl.value = '';
-        afterKeyChange();
-      } catch (err) {
-        setStatus(err.message, 'error');
-      }
+    document.getElementById('apiKeyWizardBtn').addEventListener('click', () => {
+      openSetupWizard(apiKeyProviderEl.value);
+    });
+    document.getElementById('apiKeyAddBtn').addEventListener('click', () => addNamedKey());
+
+    // The row buttons (the list is rebuilt, so delegated).
+    apiKeyListEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.key-act');
+      if (!btn || btn.disabled) return;
+      const name = btn.dataset.key;
+      if (btn.dataset.act === 'default') setDefaultKey(name);
+      else if (btn.dataset.act === 'test') testKey(name);
+      else if (btn.dataset.act === 'edit') editKey(name);
+      else if (btn.dataset.act === 'delete') deleteNamedKey(name);
     });
 
-    apiKeyTestBtn.addEventListener('click', async () => {
+    async function testKey(name) {
       const provider = apiKeyProviderEl.value;
-      if (!provider || apiKeyName === null) return;
-      setStatus(`Testing the API key for ${keyWords(provider, apiKeyName)}…`, 'busy');
+      if (!provider) return;
+      setStatus(`Testing the API key for ${keyWords(provider, name)}…`, 'busy');
       try {
-        const r = await testProviderKey(provider, apiKeyName);
+        const r = await testProviderKey(provider, name);
         setStatus(r.text, r.tone);
       } catch (err) {
         setStatus(err.message, 'error');
       }
-    });
-
-    apiKeyRemoveBtn.addEventListener('click', async () => {
-      const provider = apiKeyProviderEl.value;
-      if (!provider || apiKeyName === null) return;
-      const what = keyWords(provider, apiKeyName);
-      if (!await confirmDialog('Remove API key', `Remove the saved API key for ${what}? The key and its sources stay.`, 'Remove')) return;
-      try {
-        const data = await keyCall('remove');
-        setStatus(data.removed ? `Removed the saved API key for ${what}.` : `${what} had no saved API key.`, 'success');
-        afterKeyChange();
-      } catch (err) {
-        setStatus(err.message, 'error');
-      }
-    });
-
-    document.getElementById('apiKeyWizardBtn').addEventListener('click', () => {
-      openSetupWizard(apiKeyProviderEl.value);
-    });
-
-    // The key tabs and their actions (rebuilt with each key, so delegated).
-    apiKeyTabsEl.addEventListener('click', (e) => {
-      const tab = e.target.closest('.key-tab');
-      if (!tab) return;
-      if (tab.id === 'apiKeyAddBtn') addNamedKey();
-      else openKeyTab(tab.dataset.key);
-    });
-    apiKeyTabActionsEl.addEventListener('click', (e) => {
-      const btn = e.target.closest('button');
-      if (!btn) return;
-      if (btn.id === 'apiKeyDefaultBtn') setDefaultKey();
-      else if (btn.id === 'apiKeyRenameBtn') renameNamedKey();
-      else if (btn.id === 'apiKeyDeleteBtn') deleteNamedKey();
-    });
-    apiKeySourceEl.addEventListener('click', (e) => {
-      const btn = e.target.closest('.src-rm');
-      if (btn) removeKeySource(+btn.dataset.src);
-    });
-    apiKeySourceAddBtn.addEventListener('click', addKeySource);
+    }
 
     // Add a key: its name, and (if you have it) the key, saved in one go.
     async function addNamedKey(value = '') {
@@ -4024,67 +3882,150 @@
             setStatus(`Added the key ${provider}#${name} and saved it ${storePhrase(data)}.`, 'success');
           } else {
             await keysCall('add', { name });
-            setStatus(`Added the key ${provider}#${name}. Save its API key, or add a source for it.`, 'success');
+            setStatus(`Added the key ${provider}#${name}. Edit it to save its API key, or to add a source for it.`, 'success');
           }
           return name;
         },
       });
-      if (!added) return;
-      apiKeyName = added;
-      apiKeyInputEl.value = '';
-      afterKeyChange();
+      if (added) afterKeyChange();
     }
 
-    async function renameNamedKey() {
+    // Edit a key in a pop-up: the key (Show / Test), where it's looked for
+    // (add or remove sources, remove the saved value), a new value, and its
+    // name. Source and saved-value changes happen at once; the name and a
+    // new value when you click Save.
+    let apiKeyInfo = null;
+    async function editKey(name) {
       const provider = apiKeyProviderEl.value;
-      const old = apiKeyName;
-      if (!provider || old === null) return;
-      const unnamed = old === '';
-      const renamed = await openDialog({
-        title: unnamed ? `Name ${provider}#` : `Rename ${provider}#${old}`,
-        okLabel: unnamed ? 'Name' : 'Rename',
-        body: `<label for="renameKeyName" style="margin-top:0;">${unnamed ? 'Name' : 'New name'}</label>
-          <input id="renameKeyName" type="text" value="${esc(old)}" autocomplete="off" spellcheck="false" maxlength="32">
-          <p class="hint">${unnamed ? 'This key was saved before keys had names.' : ''} Its sources and saved key go along, and it stays the default if it is. Scripts that use <code>${esc(provider)}#${esc(old)}</code> need the new name.</p>`,
+      if (!provider || name === undefined) return;
+      apiKeyName = name;
+      let revealed = false;
+      const unnamed = name === '';
+      const body = document.createElement('div');
+      body.className = 'key-edit';
+      body.innerHTML = `
+        <label for="editKeyName" style="margin-top:0;">Name</label>
+        <div class="key-row"><code>${esc(provider)}#</code><input id="editKeyName" type="text" value="${esc(name)}" placeholder="${unnamed ? 'give it a name' : ''}" autocomplete="off" spellcheck="false" maxlength="32"></div>
+        ${unnamed ? '<p class="hint">Saved before keys had names. Give it one, or leave it empty.</p>' : ''}
+        <div class="key-edit-head">
+          <span>API key</span>
+          <button type="button" class="btn btn-ghost btn-sm" data-edit="reveal" data-cmd="key-show" data-tip="Show the key in clear text">Show Key</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-edit="test" data-cmd="key-test" data-tip="Ask the provider whether it accepts this key (lists its models; nothing is generated or billed)">Test</button>
+        </div>
+        <div class="api-key-status api-key-box" data-edit-key>Checking…</div>
+        <div class="key-view-state" data-edit-view hidden></div>
+        <div class="key-sources" data-edit-sources></div>
+        <div class="btn-row" style="margin-top:4px;">
+          <button type="button" class="btn btn-ghost btn-sm" data-edit="add-source" data-cmd="key-source-add" data-tip="Add a place to look for this key: an environment variable, a file, or a command such as a password manager's">Add Source…</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-edit="remove-saved" data-cmd="key-remove" data-tip="Delete this key's saved value (the key and its sources stay)">Remove Saved Value</button>
+        </div>
+        <label for="editKeyValue">New value <span class="muted">(leave it empty to keep the key as it is)</span></label>
+        <input id="editKeyValue" type="password" placeholder="Paste a new API key…" autocomplete="off" spellcheck="false">`;
+
+      const keyBox = () => body.querySelector('[data-edit-key]');
+      const refresh = async () => {
+        try {
+          const data = await keyCall('show', { reveal: revealed });
+          apiKeyInfo = data;
+          const hasKey = !!data.source;
+          keyBox().textContent = data.error ? `Couldn't read the key: ${data.error}` : !hasKey ? 'No API key found.' : data.key;
+          const view = body.querySelector('[data-edit-view]');
+          view.hidden = !hasKey || !!data.error;
+          view.textContent = revealed ? 'Shown in clear text' : 'Redacted';
+          view.classList.toggle('clear', revealed);
+          const rv = body.querySelector('[data-edit="reveal"]');
+          rv.disabled = !hasKey;
+          rv.textContent = revealed ? 'Hide Key' : 'Show Key';
+          rv.dataset.tip = revealed ? 'Redact the key again' : 'Show the key in clear text';
+          body.querySelector('[data-edit="test"]').disabled = !hasKey;
+          body.querySelector('[data-edit-sources]').innerHTML = keySourcesHtml(data, true);
+          const saved = (data.sources || []).find((x) => x.kind === 'saved');
+          body.querySelector('[data-edit="remove-saved"]').disabled = !saved || saved.state === 'missing';
+        } catch (err) {
+          keyBox().textContent = err.message;
+        }
+      };
+      body.addEventListener('click', async (e) => {
+        const rm = e.target.closest('.src-rm');
+        if (rm) { await removeKeySource(+rm.dataset.src); refresh(); return; }
+        const b = e.target.closest('[data-edit]');
+        if (!b || b.disabled) return;
+        const act = b.dataset.edit;
+        if (act === 'reveal') { revealed = !revealed; refresh(); }
+        else if (act === 'test') testKey(name);
+        else if (act === 'add-source') { if (await addKeySource()) refresh(); }
+        else if (act === 'remove-saved') {
+          const what = keyWords(provider, name);
+          if (!await confirmDialog('Remove saved value', `Remove ${what}'s saved API key? The key and its sources stay.`, 'Remove')) return;
+          try {
+            const data = await keyCall('remove');
+            setStatus(data.removed ? `Removed the saved API key for ${what}.` : `${what} had no saved API key.`, 'success');
+            refresh();
+          } catch (err) {
+            setStatus(err.message, 'error');
+          }
+        }
+      });
+
+      const saved = await openDialog({
+        title: `Edit ${provider}#${name}`,
+        okLabel: 'Save',
+        body,
+        onOpen: () => refresh(),
         onOk: async (dlg) => {
-          const name = dlg.querySelector('#renameKeyName').value.trim();
-          if (name === old) return old;
-          if (!KEY_NAME_RE.test(name)) throw new Error('A key needs a name: letters, digits, - and _ (at most 32).');
-          await keysCall('rename', { name: old, new_name: name });
-          setStatus(`Renamed ${provider}#${old} to ${provider}#${name}.`, 'success');
-          return name;
+          const newName = dlg.querySelector('#editKeyName').value.trim();
+          const value = dlg.querySelector('#editKeyValue').value.trim();
+          if (newName !== name) {
+            if (!KEY_NAME_RE.test(newName)) throw new Error('A key needs a name: letters, digits, - and _ (at most 32).');
+            if (newName === 'default') throw new Error('"default" isn\'t a key name: choose another.');
+          }
+          const done = [];
+          if (newName !== name) {
+            await keysCall('rename', { name, new_name: newName });
+            done.push(`renamed ${provider}#${name} to ${provider}#${newName}`);
+            apiKeyName = newName;
+          }
+          if (value) {
+            const data = await keyCall('set', { value }, apiKeyName);
+            done.push(`saved its API key ${storePhrase(data)}${shadowNote(data)}`);
+          }
+          if (done.length) {
+            const msg = done.join(', and ');
+            setStatus(`${msg.charAt(0).toUpperCase()}${msg.slice(1)}.`, 'success');
+          }
+          return true;
         },
       });
-      if (!renamed || renamed === old) return;
-      apiKeyName = renamed;
+      apiKeyInfo = null;
+      apiKeyName = null;
+      // Sources and saved values change at once, so refresh either way.
       afterKeyChange();
+      return saved;
     }
 
-    async function deleteNamedKey() {
+    async function deleteNamedKey(name) {
       const provider = apiKeyProviderEl.value;
-      const name = apiKeyName;
-      if (!provider || name === null) return;
+      if (!provider || name === undefined) return;
       const only = keyNames().length === 1;
-      const cur = ((apiKeyList && apiKeyList.keys) || []).find((k) => k.name === name);
+      const cur = keyRow(name);
       const after = only ? ` ${provider} will have no key until you add one.`
-        : cur && cur.default ? ' It\'s the default: requests will have to name a key until you choose another.' : '';
+        : cur && cur.default ? ' It\'s the default: requests will have to name a key until you make another one the default.' : '';
       if (!await confirmDialog('Delete key', `Delete the key ${provider}#${name} and its saved API key? Its sources in providers-config.yaml go too.${after}`, 'Delete')) return;
       try {
         await keysCall('remove', { name });
         setStatus(`Deleted the key ${provider}#${name}.`, 'success');
-        apiKeyName = null;
         afterKeyChange();
       } catch (err) {
         setStatus(err.message, 'error');
       }
     }
 
-    async function setDefaultKey() {
+    async function setDefaultKey(name) {
       const provider = apiKeyProviderEl.value;
-      if (!provider || apiKeyName === null) return;
+      if (!provider || name === undefined) return;
       try {
-        await keysCall('default', { name: apiKeyName });
-        setStatus(`${provider}'s requests now use the key ${keyTarget(provider, apiKeyName)} unless they name another.`, 'success');
+        await keysCall('default', { name });
+        setStatus(`${provider}'s requests now use the key ${keyTarget(provider, name)} unless they name another.`, 'success');
         afterKeyChange();
       } catch (err) {
         setStatus(err.message, 'error');
@@ -4100,9 +4041,10 @@
       return 'that source';
     }
 
+    // Add a source to the key being edited (`apiKeyName`); whether one was added.
     async function addKeySource() {
       const provider = apiKeyProviderEl.value;
-      if (!provider) return;
+      if (!provider) return false;
       const what = keyWords(provider, apiKeyName);
       const done = await openDialog({
         title: `Add a source for ${what}`,
@@ -4149,7 +4091,7 @@
           return true;
         },
       });
-      if (done) afterKeyChange();
+      return !!done;
     }
 
     async function removeKeySource(i) {
@@ -4161,7 +4103,6 @@
         setStatus(src.kind === 'saved'
           ? `${what}'s saved key is looked in last again.`
           : `${what} is no longer looked for in ${sourceWords(src.value)}.`, 'success');
-        afterKeyChange();
       } catch (err) {
         setStatus(err.message, 'error');
       }
@@ -4170,7 +4111,6 @@
     // After a key is saved or removed: refresh everything that shows keys or
     // lists usable providers.
     function afterKeyChange() {
-      setApiKeyRevealed(false);
       fetchProvidersList();
       if (typeof refreshImagesTab === 'function') refreshImagesTab();
     }
@@ -4947,35 +4887,34 @@
       }),
       // Providers tab
       'providers-show': () => ({ cli: [cliLine('providers list --raw')], py: [pyCall('providers.list')] }),
-      // The key panel: its provider and open key, written `openai#work`
-      // (`openai#` the key saved before keys had names); `openai#NAME` when
-      // the provider has no key yet.
-      'key-set': () => {
-        const t = panelTarget();
+      // The key panel: a row's key (`data-key`) or the pop-up's, written
+      // `openai#work` (`openai#` the key saved before keys had names).
+      'key-set': (el) => {
+        const t = panelTarget(el);
         return {
           cli: [cliLine('providers api-key set', panelArg(t))],
           py: ['import getpass', pyCall('providers.set_key', [t, { ph: 'getpass.getpass("API key: ")' }])],
           note: 'The command line asks for the key (or reads it from stdin), so it never shows in your history.',
         };
       },
-      'key-show': () => {
-        const t = panelTarget();
+      'key-show': (el) => {
+        const t = panelTarget(el);
         return { cli: [cliLine('providers api-key show', panelArg(t), '--reveal')], py: [pyCall('providers.show_key', [t], { reveal: true })] };
       },
-      'key-test': () => {
-        const t = panelTarget();
+      'key-test': (el) => {
+        const t = panelTarget(el);
         return { cli: [cliLine('providers status', panelArg(t))], py: [pyCall('providers.status', [t])] };
       },
-      'key-remove': () => {
-        const t = panelTarget();
+      'key-remove': (el) => {
+        const t = panelTarget(el);
         return { cli: [cliLine('providers api-key remove', panelArg(t))], py: [pyCall('providers.remove_key', [t])] };
       },
-      'key-tab': (el) => {
-        const p = apiKeyProviderEl.value || 'PROVIDER';
-        const t = `${p}#${el.dataset.key}`;
+      'key-edit': (el) => {
+        const t = panelTarget(el);
         return {
-          cli: [cliLine('providers keys list', shq(p)), cliLine('providers api-key show', shq(t))],
-          py: [pyCall('providers.keys', [p]), pyCall('providers.show_key', [t])],
+          cli: [cliLine('providers api-key show', panelArg(t)), cliLine('providers api-key set', panelArg(t)), cliLine('providers keys rename', panelArg(t), 'NEW')],
+          py: [pyCall('providers.show_key', [t]), 'import getpass', pyCall('providers.set_key', [t, { ph: 'getpass.getpass("API key: ")' }])],
+          note: 'Show it, save a new value (asked for, so it never shows in your history), or rename it.',
         };
       },
       'key-add': () => {
@@ -4986,20 +4925,18 @@
           note: `Saving a key for ${p}#NAME adds the key NAME; \`lexi providers keys add ${p}#NAME\` adds it without a value.`,
         };
       },
-      'key-rename': () => {
-        const t = panelTarget();
-        return { cli: [cliLine('providers keys rename', panelArg(t), 'NEW')], py: [pyCall('providers.rename_key', [apiKeyProviderEl.value || 'PROVIDER', apiKeyName ?? 'KEY', { ph: '"NEW"' }])] };
+      'key-delete': (el) => {
+        const t = panelTarget(el);
+        const [p, k] = [t.slice(0, t.indexOf('#')), t.slice(t.indexOf('#') + 1)];
+        return { cli: [cliLine('providers keys rm', panelArg(t))], py: [pyCall('providers.delete_key', [p, k])] };
       },
-      'key-delete': () => {
-        const t = panelTarget();
-        return { cli: [cliLine('providers keys rm', panelArg(t))], py: [pyCall('providers.delete_key', [apiKeyProviderEl.value || 'PROVIDER', apiKeyName ?? 'KEY'])] };
+      'key-default': (el) => {
+        const t = panelTarget(el);
+        const [p, k] = [t.slice(0, t.indexOf('#')), t.slice(t.indexOf('#') + 1)];
+        return { cli: [cliLine('providers keys default', panelArg(t))], py: [pyCall('providers.set_default_key', [p, k])] };
       },
-      'key-default': () => {
-        const t = panelTarget();
-        return { cli: [cliLine('providers keys default', panelArg(t))], py: [pyCall('providers.set_default_key', [apiKeyProviderEl.value || 'PROVIDER', apiKeyName ?? 'KEY'])] };
-      },
-      'key-source-add': () => {
-        const t = panelTarget();
+      'key-source-add': (el) => {
+        const t = panelTarget(el);
         return {
           cli: [cliLine('providers api-key source add', panelArg(t), '--env VAR'), cliLine('providers api-key source add', panelArg(t), "--command 'op read op://Private/Item/credential'")],
           py: [pyCall('providers.add_key_source', [t], { env: { ph: '"VAR"' } })],
@@ -7311,7 +7248,6 @@
           refreshImagesTab();
         }
         if (target === 'providers') {
-          setApiKeyRevealed(false);
           fetchProvidersList();
         }
         if (target === 'models') {
