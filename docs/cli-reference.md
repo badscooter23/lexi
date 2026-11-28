@@ -350,13 +350,13 @@ lexi providers add [OPTIONS] --url <URL> --default_model <DEFAULT_MODEL> <NAME>
 - `<NAME>`
 - `--url` — Base URL, e.g. https://api.example.com/v1
 - `--default_model` — The model used when none is given
-- `--api_key` — API key (saved in the provider's owner-only key file, never the config)
+- `--api_key` — API key (saved in the macOS Keychain, else an owner-only key file; never the config)
 - `--api` — API definition the provider speaks
 - `--hosted_models` — Path of the provider's models endpoint
 
 #### `providers api-key set`
 
-Save an API key as the provider's saved key (an owner-only file, providers/<name>/api-key), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value
+Save an API key as the provider's saved key (in the macOS Keychain, else an owner-only file, providers/<name>/api-key; key_store in config picks), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value
 
 ```
 lexi providers api-key set [OPTIONS] <NAME>

@@ -127,6 +127,13 @@ impl<'a> Io<'a> {
         EXIT_FAILURE
     }
 
+    /// Something worth telling you once (e.g. a key moved into the macOS
+    /// Keychain), on stderr in both modes.
+    pub fn notice(&mut self, msg: impl Display) {
+        let _ = writeln!(self.err, "{msg}");
+        let _ = self.err.flush();
+    }
+
     /// A non-fatal warning on stderr (human text in both modes, so stdout
     /// stays clean JSON).
     pub fn warn(&mut self, msg: impl Display) {

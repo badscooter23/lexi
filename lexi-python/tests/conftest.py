@@ -1,10 +1,15 @@
 """Shared fixtures: an in-process mock provider and a temp ``$LEXI_HOME``."""
 
 import json
+import os
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+
+# Saved keys go in files under the test's $LEXI_HOME, never the real keychain
+# (set before the first lexi call, for every test).
+os.environ["LEXI_KEY_STORE"] = "file"
 
 
 class Mock:

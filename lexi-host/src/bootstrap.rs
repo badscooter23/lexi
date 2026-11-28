@@ -92,7 +92,29 @@ pub fn ensure_home_in(home: &Path) -> Result<Vec<PathBuf>, HostError> {
         created.push(aliases);
     }
     crate::config::upgrade_key_sources(home);
+    let moved = crate::config::move_saved_keys(home);
+    if !moved.is_empty() {
+        if let Ok(mut n) = notices().lock() {
+            n.extend(moved);
+        }
+    }
     Ok(created)
+}
+
+fn notices() -> &'static std::sync::Mutex<Vec<String>> {
+    static NOTICES: std::sync::OnceLock<std::sync::Mutex<Vec<String>>> = std::sync::OnceLock::new();
+    NOTICES.get_or_init(Default::default)
+}
+
+/// What [`ensure_home`] did that's worth telling you once ("Moved
+/// anthropic's API key into the macOS Keychain."), taken: the next call
+/// returns only newer ones. The CLI prints them, the desktop app shows them
+/// at startup, the Python library issues them as warnings.
+pub fn take_notices() -> Vec<String> {
+    notices()
+        .lock()
+        .map(|mut n| std::mem::take(&mut *n))
+        .unwrap_or_default()
 }
 
 fn aliases_missing_or_empty(path: &Path) -> bool {

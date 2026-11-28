@@ -629,6 +629,7 @@ fn startup(path: &str) -> Result<Value, String> {
         "providers": providers,
         "has_credentials": has_credentials,
         "platform": std::env::consts::OS,
+        "notices": lexi_host::take_notices(),
     }))
 }
 
@@ -642,7 +643,8 @@ fn startup_seen() -> Result<Value, String> {
 
 /// `POST /api/providers/api-key` `{action: show|set|remove, provider,
 /// reveal?, value?}` — a provider's API key: `set` saves it as the saved key
-/// (the provider's owner-only key file; listed sources are never written),
+/// (in the macOS Keychain, else the provider's owner-only key file; listed
+/// sources are never written),
 /// `remove` deletes the saved one. Every action answers with the
 /// provider's credentials afterwards (plus `location`/`added`/`used`, or
 /// `removed`).
@@ -1459,6 +1461,8 @@ pub(crate) mod tests {
         let home = tempfile::tempdir().unwrap();
         let out = home.path().join("pictures");
         std::env::set_var("LEXI_HOME", home.path());
+        // Never the real keychain.
+        std::env::set_var("LEXI_KEY_STORE", "file");
         std::fs::create_dir_all(home.path().join("providers")).unwrap();
         std::fs::write(
             home.path().join("providers/providers-config.yaml"),
@@ -1702,6 +1706,8 @@ pub(crate) mod tests {
 
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("LEXI_HOME", home.path());
+        // Never the real keychain.
+        std::env::set_var("LEXI_KEY_STORE", "file");
         std::fs::create_dir_all(home.path().join("providers")).unwrap();
         std::fs::write(
             home.path().join("providers/providers-config.yaml"),

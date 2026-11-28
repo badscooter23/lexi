@@ -66,7 +66,7 @@ not enforced). The wheel's engine functions (`lexi.compose_request_body`, …) w
 Building blocks used by the operations above, or run implicitly by every surface
 (home seeding fills in missing defaults at CLI/GUI startup); not surfaced on their own.
 
-`ensure_home`, `ensure_home_in`, `default_aliases`, `lexi_home`, `template_names`, `provider_template`, `binding_config`, `provider_config`, `prompt_defaults`, `prompt_value`, `load_api_def`, `deep_merge`, `effective_config`, `resolve_api_key`, `build_headers`
+`ensure_home`, `ensure_home_in`, `take_notices`, `default_aliases`, `lexi_home`, `template_names`, `provider_template`, `binding_config`, `provider_config`, `prompt_defaults`, `prompt_value`, `load_api_def`, `deep_merge`, `effective_config`, `resolve_api_key`, `build_headers`
 
 ## CLI-only
 

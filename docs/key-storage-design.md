@@ -1,6 +1,6 @@
 # API Key Storage — Design
 
-**Status:** accepted · 2026-11-25 · step 1 (source model) implemented
+**Status:** accepted · 2026-11-25 · steps 1 (source model) and 2 (macOS store) implemented
 **Scope:** where Lexi reads API keys from and where it saves them: the CLI, the
 Python library and the desktop app (all via `lexi-host`).
 **Replaces:** the 0.3.0 rule that a saved key goes into "the first file
@@ -136,6 +136,9 @@ caller is the app, the CLI or a Python process.
 - When `LEXI_HOME` isn't the default `~/.lexi-cli`, the account gets
   `@<canonical LEXI_HOME>` appended, so separate configs (tests, profiles)
   never share keys.
+- In the `security -i` line, arguments are double-quoted with `\` and `"`
+  escaped (the tool's own parser); `security` exits with the low byte of the
+  OSStatus (44 not found, 36 interaction not allowed = locked).
 - Windows targets and Secret Service attributes carry the same fields.
 
 **Choosing a backend.** Set `key_store` in `config.json` to `auto` (the
@@ -145,7 +148,8 @@ default), `system` or `file`. `LEXI_KEY_STORE` overrides it (tests, CI).
 - **`file`** always uses the file.
 
 **A locked store** (macOS over SSH is the common case) is a read error, which
-only happens if no earlier source had a key. The message says how to fix it:
+only happens if no earlier source had a key, and if no key file is left from
+before (one is read until it can be moved in). The message says how to fix it:
 `security unlock-keychain`, set the variable, or `key_store: file`. Saving
 into a locked store fails the same way; it never falls back to a file, so a
 key is never split across two places.
@@ -244,8 +248,11 @@ then `set` on the old version restores them.
   the developer's real keychain or credential store. The harness sets it, and
   a guard test fails if it's missing.
 - **macOS backend tests** use a throw-away keychain (`security
-  create-keychain` in a temp dir), passed to each `security` call by path. They
-  never change the user's keychain search list.
+  create-keychain` in a temp dir), passed to each `security` call by path
+  (`LEXI_KEYCHAIN` for the CLI). Creating a keychain adds it to the search
+  list, so the tests put the list back straight away, and they run only when
+  `LEXI_TEST_KEYCHAIN` is set (CI on macOS), never on a developer's Mac by
+  default.
 - **Windows backend tests** use a unique target prefix and clean up.
 - **Linux backend tests** run against a private `gnome-keyring-daemon` on a
   session bus in CI.

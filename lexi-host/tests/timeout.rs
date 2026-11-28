@@ -21,6 +21,8 @@ fn set_timeout(v: Value) -> Result<Value, HostError> {
 async fn requests_stop_waiting_after_request_timeout() {
     let home = tempfile::tempdir().unwrap();
     std::env::set_var("LEXI_HOME", home.path());
+    // Never the real keychain.
+    std::env::set_var("LEXI_KEY_STORE", "file");
 
     // The setting is a whole number of seconds (text from the CLI works too).
     assert_eq!(set_timeout(json!("2")).unwrap()["request_timeout"], 2);

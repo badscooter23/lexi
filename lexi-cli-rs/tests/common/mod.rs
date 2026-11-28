@@ -5,10 +5,11 @@ use std::path::Path;
 
 use assert_cmd::Command;
 
-/// The `lexi` binary, pointed at `home` as its `LEXI_HOME`.
+/// The `lexi` binary, pointed at `home` as its `LEXI_HOME`, keeping saved
+/// keys in files there (never the real keychain).
 pub fn lexi(home: &Path) -> Command {
     let mut cmd = Command::cargo_bin("lexi").unwrap();
-    cmd.env("LEXI_HOME", home);
+    cmd.env("LEXI_HOME", home).env("LEXI_KEY_STORE", "file");
     cmd
 }
 

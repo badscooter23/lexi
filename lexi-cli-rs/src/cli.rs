@@ -294,7 +294,7 @@ pub enum ProvidersCmd {
         /// The model used when none is given.
         #[arg(long = "default_model", visible_alias = "default-model")]
         default_model: String,
-        /// API key (saved in the provider's owner-only key file, never the config).
+        /// API key (saved in the macOS Keychain, else an owner-only key file; never the config).
         #[arg(long = "api_key", visible_alias = "api-key")]
         api_key: Option<String>,
         /// API definition the provider speaks.
@@ -370,7 +370,7 @@ pub enum ProviderApiCmd {
 
 #[derive(Debug, Subcommand)]
 pub enum ApiKeyCmd {
-    /// Save an API key as the provider's saved key (an owner-only file, providers/<name>/api-key), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value.
+    /// Save an API key as the provider's saved key (in the macOS Keychain, else an owner-only file, providers/<name>/api-key; key_store in config picks), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value.
     Set {
         name: String,
         #[arg(short, long)]

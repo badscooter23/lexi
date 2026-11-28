@@ -13,6 +13,7 @@ pub mod embed;
 pub mod generate;
 pub mod hosted;
 pub mod image;
+mod key_store;
 mod keystore;
 pub mod models;
 pub mod respond;
@@ -65,7 +66,7 @@ pub enum HostError {
     Json(#[from] serde_json::Error),
 }
 
-pub use bootstrap::{ensure_home, ensure_home_in};
+pub use bootstrap::{ensure_home, ensure_home_in, take_notices};
 pub use config::with_request_timeout;
 pub use embed::{embed, EmbedRequest};
 pub use generate::{generate_images_text, generate_images_with_effective, SavedArtifact};

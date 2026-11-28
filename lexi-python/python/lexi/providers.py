@@ -33,7 +33,8 @@ def add(
     hosted_models: str = "/models",
 ) -> Dict[str, Any]:
     """Add a provider speaking API definition ``api`` at ``url``. ``api_key``
-    goes to the provider's owner-only key file, never the config."""
+    is saved in the macOS Keychain, else the provider's owner-only key file;
+    never the config."""
     return call(
         "providers.add",
         name=name,
@@ -56,11 +57,13 @@ def remove(name: str) -> Dict[str, Any]:
 
 
 def set_key(name: str, key: str, *, api: Optional[str] = None) -> Dict[str, Any]:
-    """Save an API key as the provider's saved key: an owner-only file,
-    ``providers/<name>/api-key`` (``api-key-<api>`` with ``api``, a key for
-    that API only), looked in after the sources ``api_key`` lists, which are
-    never written. Returns ``{provider, location, added, used}``:
-    ``location`` is the file, ``added`` whether providers-config.yaml changed
+    """Save an API key as the provider's saved key (``api``: a key for that
+    API only) — in the macOS Keychain, else an owner-only file,
+    ``providers/<name>/api-key`` (``api-key-<api>``); ``key_store`` in the
+    config picks — looked in after the sources ``api_key`` lists, which are
+    never written. Returns ``{provider, location, store, added, used}``:
+    ``location`` is where it's kept (``"the macOS Keychain"`` or the file),
+    ``store`` ``"keychain"`` or ``"file"``, ``added`` whether providers-config.yaml changed
     (an API got its own ``api_key``, or a key written in it was taken out),
     ``used`` where the key is now read from (another source when an earlier
     one has a key)."""
@@ -73,14 +76,16 @@ def show_key(name: str, *, reveal: bool = False, api: Optional[str] = None) -> D
     ``sources`` is where it's looked for, in order (the saved key among them),
     each ``{kind, from, state, note?}``; ``source``/``from``/``key`` describe
     the key that's used (masked unless ``reveal``; None when there's none).
-    Commands run only with ``reveal``. ``save_to`` is the file
-    :func:`set_key` saves the key in."""
+    Commands run only with ``reveal``. ``save_to`` is where :func:`set_key`
+    saves the key; ``store`` is ``{kind, available, locked}`` (``kind``
+    ``"keychain"`` or ``"file"``)."""
     return call("providers.show_key", name=name, reveal=reveal, api=api)
 
 
 def remove_key(name: str, *, api: Optional[str] = None) -> Dict[str, Any]:
-    """Delete the saved key (the sources ``api_key`` lists, and the config,
-    are left as they are): ``{"removed": bool}``."""
+    """Delete the saved key, from the keychain and any key file (the sources
+    ``api_key`` lists, and the config, are left as they are):
+    ``{"removed": bool}``."""
     return call("providers.remove_key", name=name, api=api)
 
 

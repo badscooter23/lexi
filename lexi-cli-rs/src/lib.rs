@@ -54,6 +54,9 @@ where
     if let Err(e) = lexi_host::ensure_home() {
         io.warn(format_args!("could not prepare the Lexi home: {e}"));
     }
+    for notice in lexi_host::take_notices() {
+        io.notice(notice);
+    }
     let mut argv: Vec<String> = args
         .into_iter()
         .map(|a| a.into().to_string_lossy().into_owned())

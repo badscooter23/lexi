@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map as JsonMap, Value};
 
+use crate::key_store::{self, Slot, Store, KEY_STORE_SETTING};
 use crate::keystore::{self, Lookup, LookupOpts, Source};
 use crate::HostError;
 
@@ -223,10 +224,10 @@ pub const SAVED_SOURCE: &str = keystore::SAVED;
 /// `{model: FILE}` (a configured model's own, listed in FILE; no saved key).
 pub(crate) const KEY_SCOPE: &str = "_key_scope";
 
-/// For `cfg` (a provider entry or an effective config): the file its saved
-/// key is in (none for a model's own `api_key`), and the config files its
-/// `api_key` list comes from.
-fn key_context(home: &Path, provider: &str, cfg: &Value) -> (Option<String>, Vec<PathBuf>) {
+/// For `cfg` (a provider entry or an effective config): its saved key (none
+/// for a model's own `api_key`), and the config files its `api_key` list
+/// comes from.
+fn key_context(home: &Path, provider: &str, cfg: &Value) -> (Option<Slot>, Vec<PathBuf>) {
     let mut guard = vec![providers_config_path(home)];
     let scope = cfg.get(KEY_SCOPE);
     if let Some(file) = scope.and_then(|s| s.get("model")).and_then(Value::as_str) {
@@ -234,7 +235,7 @@ fn key_context(home: &Path, provider: &str, cfg: &Value) -> (Option<String>, Vec
         return (None, guard);
     }
     let api = scope.and_then(|s| s.get("api")).and_then(Value::as_str);
-    (Some(key_file(provider, api)), guard)
+    (Some(Slot::new(provider, api)), guard)
 }
 
 /// The `api_key` sources in `cfg` — a provider entry, or a binding's or
@@ -260,14 +261,18 @@ fn lookup_api_key_in(
     cfg: &Value,
     run_commands: bool,
 ) -> Result<Lookup, HostError> {
-    let (saved, guard) = key_context(home, provider, cfg);
-    let sources = keystore::with_saved(&key_sources(cfg)?, saved.as_deref());
+    let (slot, guard) = key_context(home, provider, cfg);
+    let listed = key_sources(cfg)?;
+    let store = Store::open(home)?;
+    let sources =
+        keystore::with_saved(&listed, slot.as_ref().map(|s| store.location(s)).as_deref());
     Ok(keystore::lookup_with(
         home,
         &sources,
         &LookupOpts {
             run_commands,
             guard,
+            saved: slot.map(|s| (store, s)),
         },
     ))
 }
@@ -321,8 +326,11 @@ pub fn api_key_source(
 /// Where a saved key went (`set_api_key`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SavedKey {
-    /// Where it's kept: its key file, under `$LEXI_HOME`.
+    /// Where it's kept: `the macOS Keychain`, or its key file (under
+    /// `$LEXI_HOME`).
     pub location: String,
+    /// The kind of store: `keychain` or `file`.
+    pub store: String,
     /// Whether providers-config.yaml changed: an API that used the
     /// provider's key got its own `api_key`, or a key written in the config
     /// was taken out.
@@ -336,6 +344,7 @@ impl SavedKey {
     pub fn to_value(&self) -> Value {
         serde_json::json!({
             "location": self.location,
+            "store": self.store,
             "added": self.added,
             "used": self.used,
         })
@@ -387,12 +396,10 @@ fn key_scope(home: &Path, provider: &str, api: Option<&str>) -> Result<KeyScope,
     })
 }
 
-/// The key file Lexi saves `provider`'s key in (or its `api`'s own key).
+/// The key file Lexi saves (or once saved) `provider`'s key in (or its
+/// `api`'s own key).
 fn key_file(provider: &str, api: Option<&str>) -> String {
-    match api {
-        Some(a) => format!("providers/{provider}/api-key-{a}"),
-        None => format!("providers/{provider}/api-key"),
-    }
+    Slot::new(provider, api).file()
 }
 
 /// Write `scope`'s list back into providers-config.yaml.
@@ -418,75 +425,70 @@ fn write_scope_sources(
     }
 }
 
-/// Save `key` in the file `raw` names, readable only by you.
-fn write_key_file(home: &Path, raw: &str, key: &str) -> Result<(), HostError> {
-    let path = keystore::file_path(home, raw);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&path, format!("{key}\n"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+/// The sources `provider`'s (or its `api`'s) key is looked for in — the
+/// API's own (and its saved key), else the provider's — with the saved key
+/// they lead to and whether they're the API's own.
+struct ScopeSources {
+    sources: Vec<Source>,
+    slot: Slot,
+    own: bool,
 }
 
-/// The sources `provider`'s (or its `api`'s) key is looked for in — the
-/// API's own (and its saved key), else the provider's — and whether they're
-/// the API's own.
 fn scope_sources(
     home: &Path,
+    store: &Store,
     provider: &str,
     api: Option<&str>,
-) -> Result<(Vec<Source>, bool), HostError> {
+) -> Result<ScopeSources, HostError> {
     let scope = key_scope(home, provider, api)?;
-    Ok(if scope.own {
-        (
-            keystore::with_saved(&scope.sources, Some(&key_file(provider, api))),
-            true,
-        )
+    let (listed, slot) = if scope.own {
+        (scope.sources, Slot::new(provider, api))
     } else {
-        let provider_scope = key_scope(home, provider, None)?;
         (
-            keystore::with_saved(&provider_scope.sources, Some(&key_file(provider, None))),
-            false,
+            key_scope(home, provider, None)?.sources,
+            Slot::new(provider, None),
         )
+    };
+    Ok(ScopeSources {
+        sources: keystore::with_saved(&listed, Some(&store.location(&slot))),
+        slot,
+        own: scope.own,
     })
 }
 
-fn scope_lookup(home: &Path, sources: &[Source], run_commands: bool) -> Lookup {
+fn scope_lookup(home: &Path, store: &Store, scope: &ScopeSources, run_commands: bool) -> Lookup {
     keystore::lookup_with(
         home,
-        sources,
+        &scope.sources,
         &LookupOpts {
             run_commands,
             guard: vec![providers_config_path(home)],
+            saved: Some((store.clone(), scope.slot.clone())),
         },
     )
 }
 
-/// Where `provider`'s (or its `api`'s) key is read from now: the saved key's
-/// file when it's the one, else the source's description (a command isn't
-/// run, so one that would be is the answer).
-fn used_source(home: &Path, provider: &str, api: Option<&str>) -> Option<String> {
-    let (sources, _) = scope_sources(home, provider, api).ok()?;
-    match scope_lookup(home, &sources, false).source()? {
-        Source::Saved(file) => Some(file.clone()),
+/// Where `provider`'s (or its `api`'s) key is read from now: where the saved
+/// key is kept when it's the one, else the source's description (a command
+/// isn't run, so one that would be is the answer).
+fn used_source(home: &Path, store: &Store, provider: &str, api: Option<&str>) -> Option<String> {
+    let scope = scope_sources(home, store, provider, api).ok()?;
+    match scope_lookup(home, store, &scope, false).source()? {
+        Source::Saved(place) => Some(place.clone()),
         other => Some(other.describe()),
     }
 }
 
 /// What a key operation on `provider` (or its `api`) sees: the sources that
 /// apply (the API's own, else the provider's, with the saved key in its
-/// place), whether they're the API's own, the file a saved key goes in, and
-/// what looking through the sources found (commands run only with
-/// `run_commands`).
+/// place), whether they're the API's own, where a saved key goes (and the
+/// kind of store), and what looking through the sources found (commands run
+/// only with `run_commands`).
 pub(crate) struct KeyPlan {
     pub(crate) sources: Vec<Source>,
     pub(crate) own: bool,
     pub(crate) save_to: String,
+    pub(crate) store: &'static str,
     pub(crate) lookup: Lookup,
 }
 
@@ -496,20 +498,23 @@ pub(crate) fn key_plan(
     run_commands: bool,
 ) -> Result<KeyPlan, HostError> {
     let home = lexi_home();
-    let (sources, own) = scope_sources(&home, provider, api)?;
-    let lookup = scope_lookup(&home, &sources, run_commands);
+    let store = Store::open(&home)?;
+    let scope = scope_sources(&home, &store, provider, api)?;
+    let lookup = scope_lookup(&home, &store, &scope, run_commands);
     Ok(KeyPlan {
-        sources,
-        own,
-        save_to: key_file(provider, api),
+        save_to: store.location(&Slot::new(provider, api)),
+        store: store.kind(),
+        sources: scope.sources,
+        own: scope.own,
         lookup,
     })
 }
 
 /// Save an API key for `provider` — or, with `api`, a key for that API only —
-/// as its saved key: an owner-only file, `providers/<name>/api-key`
-/// (`api-key-<api>` for an API). The sources `api_key` lists are never
-/// written. providers-config.yaml changes only when an API that used the
+/// as its saved key: in the macOS Keychain, else an owner-only file,
+/// `providers/<name>/api-key` (`api-key-<api>` for an API) — one copy, in
+/// one place (`key_store` in config.json). The sources `api_key` lists are
+/// never written. providers-config.yaml changes only when an API that used the
 /// provider's key gets its own (`api_key: [saved]`), or to take out a key
 /// written in the config itself.
 pub fn set_api_key(
@@ -531,8 +536,9 @@ fn set_api_key_in(
         return Err(HostError::Config("API key cannot be empty".into()));
     }
     let scope = key_scope(home, provider_name, api)?;
-    let file = key_file(provider_name, api);
-    write_key_file(home, &file, key)?;
+    let store = Store::open(home)?;
+    let slot = Slot::new(provider_name, api);
+    store.write(&slot, key)?;
     keystore::forget_commands();
     let has_literal = scope
         .sources
@@ -553,8 +559,9 @@ fn set_api_key_in(
         write_scope_sources(home, provider_name, scope, &list)?;
     }
     Ok(SavedKey {
-        used: used_source(home, provider_name, api),
-        location: file,
+        used: used_source(home, &store, provider_name, api),
+        location: store.location(&slot),
+        store: store.kind().to_string(),
         added,
     })
 }
@@ -565,9 +572,9 @@ fn uses_provider_key(provider: &str, api: &str) -> HostError {
     ))
 }
 
-/// Delete `provider`'s (or its `api`'s) saved key. The sources `api_key`
-/// lists (yours) and providers-config.yaml are left as they are. Returns
-/// whether there was one.
+/// Delete `provider`'s (or its `api`'s) saved key (from the keychain and any
+/// key file). The sources `api_key` lists (yours) and providers-config.yaml
+/// are left as they are. Returns whether there was one.
 pub fn remove_api_key(provider_name: &str, api: Option<&str>) -> Result<bool, HostError> {
     remove_api_key_in(&lexi_home(), provider_name, api)
 }
@@ -582,12 +589,7 @@ fn remove_api_key_in(
         return Err(uses_provider_key(provider_name, a));
     }
     keystore::forget_commands();
-    let path = home.join(key_file(provider_name, api));
-    if path.exists() {
-        std::fs::remove_file(path)?;
-        return Ok(true);
-    }
-    Ok(false)
+    Store::open(home)?.delete(&Slot::new(provider_name, api))
 }
 
 /// The sources `provider`'s (or its `api`'s) key is looked for in, in order:
@@ -606,8 +608,9 @@ fn key_source_list_in(home: &Path, provider: &str, api: Option<&str>) -> Result<
         key_scope(home, provider, None)?.sources
     };
     let marked = listed.iter().any(|s| matches!(s, Source::Saved(_)));
-    let saved_file = key_file(provider, if scope.own { api } else { None });
-    let rows: Vec<Value> = keystore::with_saved(&listed, Some(&saved_file))
+    let saved_at =
+        Store::open(home)?.location(&Slot::new(provider, if scope.own { api } else { None }));
+    let rows: Vec<Value> = keystore::with_saved(&listed, Some(&saved_at))
         .iter()
         .map(|s| {
             let mut row = serde_json::json!({
@@ -751,6 +754,22 @@ pub(crate) fn upgrade_key_sources(home: &Path) {
     if changed {
         let _ = write_yaml(&providers_config_path(home), &Value::Object(doc));
     }
+}
+
+/// Move the key files Lexi saved into the OS store, when that's where saved
+/// keys are kept now (`docs/key-storage-design.md` §6 step 2); what moved, as
+/// messages. Best effort: a key that can't move stays in its file and is
+/// read from there.
+pub(crate) fn move_saved_keys(home: &Path) -> Vec<String> {
+    let Ok(doc) = read_providers_doc(home) else {
+        return Vec::new();
+    };
+    let names: Vec<String> = doc
+        .get("providers")
+        .and_then(Value::as_object)
+        .map(|p| p.keys().cloned().collect())
+        .unwrap_or_default();
+    key_store::move_into_store(home, &names)
 }
 
 /// In a raw provider entry, Lexi's own key file listed in its `api_key` (and
@@ -1227,7 +1246,7 @@ pub fn load_config() -> Result<Value, HostError> {
     load_config_in(&lexi_home())
 }
 
-fn load_config_in(home: &Path) -> Result<Value, HostError> {
+pub(crate) fn load_config_in(home: &Path) -> Result<Value, HostError> {
     let path = home.join("config.json");
     if !path.exists() {
         return Ok(Value::Object(Default::default()));
@@ -1344,6 +1363,14 @@ fn set_config_in(home: &Path, updates: &Map) -> Result<Value, HostError> {
                     "request_timeout is a whole number of seconds (0 = no limit), not {v}"
                 ))
             })?)
+        } else if k == KEY_STORE_SETTING {
+            let mode = v.as_str().and_then(key_store::parse_mode).ok_or_else(|| {
+                HostError::Invalid(format!(
+                    "key_store is {}, not {v}",
+                    key_store::KEY_STORE_MODES.join(", ")
+                ))
+            })?;
+            Value::from(mode)
         } else {
             v.clone()
         };
@@ -1785,6 +1812,13 @@ fn rename_provider_in(home: &Path, old: &str, new: &str) -> Result<(), HostError
         })
         .collect();
     *providers = renamed;
+    // Saved keys in the keychain go along (key files move with their folder).
+    let store = Store::open(home)?;
+    if let Some(entry) = providers.get(new) {
+        for slot in saved_slots(home, old, entry) {
+            store.rename(&slot, &Slot::new(new, slot.api.as_deref()))?;
+        }
+    }
     if let Some(entry) = providers.get_mut(new) {
         let old_dir = format!("providers/{old}/");
         rewrite_entry_sources(entry, |list| {
@@ -1829,8 +1863,30 @@ fn rewrite_entry_sources(entry: &mut Value, mut f: impl FnMut(Vec<Source>) -> Ve
     }
 }
 
-/// Remove a provider: its config entry and its `providers/<name>/` directory
-/// (models, aliases, default model, key files).
+/// Every saved key `provider` may have: its own, and one per API it has or
+/// could have (each shipped and custom API definition).
+fn saved_slots(home: &Path, provider: &str, entry: &Value) -> Vec<Slot> {
+    let mut apis: Vec<String> = embedded_api_names().into_iter().map(String::from).collect();
+    if let Ok(defs) = list_api_defs_in(home) {
+        apis.extend(defs.into_iter().map(|(name, _)| name));
+    }
+    if let Some(bindings) = entry.get("apis").and_then(Value::as_array) {
+        apis.extend(
+            bindings
+                .iter()
+                .filter_map(|b| b.get("api").and_then(Value::as_str))
+                .map(String::from),
+        );
+    }
+    apis.sort();
+    apis.dedup();
+    std::iter::once(Slot::new(provider, None))
+        .chain(apis.iter().map(|a| Slot::new(provider, Some(a))))
+        .collect()
+}
+
+/// Remove a provider: its config entry, its saved keys and its
+/// `providers/<name>/` directory (models, aliases, default model, key files).
 pub fn remove_provider(name: &str) -> Result<(), HostError> {
     remove_provider_in(&lexi_home(), name)
 }
@@ -1838,8 +1894,12 @@ pub fn remove_provider(name: &str) -> Result<(), HostError> {
 fn remove_provider_in(home: &Path, name: &str) -> Result<(), HostError> {
     check_provider_name(name)?;
     let mut doc = read_providers_doc(home)?;
-    if providers_mut(&mut doc).shift_remove(name).is_none() {
+    let Some(entry) = providers_mut(&mut doc).shift_remove(name) else {
         return Err(HostError::UnknownProvider(name.to_string()));
+    };
+    let store = Store::open(home)?;
+    for slot in saved_slots(home, name, &entry) {
+        store.delete(&slot)?;
     }
     write_yaml(&providers_config_path(home), &Value::Object(doc))?;
     let dir = home.join("providers").join(name);
