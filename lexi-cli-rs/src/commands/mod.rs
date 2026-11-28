@@ -92,7 +92,7 @@ pub(crate) async fn dispatch(cmd: Cmd, io: &mut Io<'_>, opts: RunOptions) -> u8 
             (Ok(t), Ok(key)) => match request_key(io, &provider, key.as_deref()) {
                 Ok((p, key, label)) => {
                     let run = respond::respond(io, &p, &label, &args);
-                    lexi_host::config::with_key(key, timed(t, run)).await
+                    Box::pin(lexi_host::config::with_key(key, timed(t, Box::pin(run)))).await
                 }
                 Err(code) => code,
             },
@@ -108,14 +108,22 @@ pub(crate) async fn dispatch(cmd: Cmd, io: &mut Io<'_>, opts: RunOptions) -> u8 
         } => match request_key(io, &provider, key.as_deref()) {
             Ok((p, key, label)) => {
                 let run = chat::generate(io, p, label, prompt, model, out);
-                lexi_host::config::with_key(key, timed(timeout, run)).await
+                Box::pin(lexi_host::config::with_key(
+                    key,
+                    timed(timeout, Box::pin(run)),
+                ))
+                .await
             }
             Err(code) => code,
         },
         Cmd::Embed { provider, mut args } => match (take_timeout(&mut args), take_key(&mut args)) {
             (Ok(t), Ok(key)) => match request_key(io, &provider, key.as_deref()) {
                 Ok((p, key, _)) => {
-                    lexi_host::config::with_key(key, timed(t, embed::embed(io, &p, &args))).await
+                    Box::pin(lexi_host::config::with_key(
+                        key,
+                        timed(t, Box::pin(embed::embed(io, &p, &args))),
+                    ))
+                    .await
                 }
                 Err(code) => code,
             },
@@ -127,22 +135,26 @@ pub(crate) async fn dispatch(cmd: Cmd, io: &mut Io<'_>, opts: RunOptions) -> u8 
             key,
         } => match request_key(io, &provider, key.as_deref()) {
             Ok((p, key, label)) => {
-                lexi_host::config::with_key(key, chat::upload(io, p, label, file)).await
+                Box::pin(lexi_host::config::with_key(
+                    key,
+                    chat::upload(io, p, label, file),
+                ))
+                .await
             }
             Err(code) => code,
         },
-        Cmd::Jobs { cmd } => jobs::run(io, cmd).await,
+        Cmd::Jobs { cmd } => Box::pin(jobs::run(io, cmd)).await,
         Cmd::Tags => models::vocabulary(io),
         Cmd::Version => chat::version(io),
-        Cmd::Help { topic } => shell_cmds::help(io, topic, opts).await,
+        Cmd::Help { topic } => Box::pin(shell_cmds::help(io, topic, opts)).await,
         Cmd::Alias { cmd } => shell_cmds::alias(io, cmd),
         Cmd::History { count, clear } => shell_cmds::history(io, count, clear),
         Cmd::Sh { command } => shell_cmds::sh(io, &command.join(" "), opts),
         Cmd::Exit => crate::output::EXIT_OK,
         Cmd::Config { cmd } => config::run(io, cmd),
         Cmd::Prompts { cmd } => prompts::run(io, cmd),
-        Cmd::Providers { cmd } => providers::run(io, cmd).await,
-        Cmd::Models { cmd } => models::run(io, cmd).await,
+        Cmd::Providers { cmd } => Box::pin(providers::run(io, cmd)).await,
+        Cmd::Models { cmd } => Box::pin(models::run(io, cmd)).await,
         Cmd::Api { cmd } => api::run(io, cmd),
     }
 }

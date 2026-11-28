@@ -101,7 +101,9 @@ pub(crate) async fn run_parsed(argv: Vec<String>, io: &mut Io<'_>, opts: RunOpti
     };
     let json = cli.json || io.json;
     let saved = std::mem::replace(&mut io.json, json);
-    let code = commands::dispatch(cmd, io, opts).await;
+    // Boxed: a command's future is large (every command's state machine),
+    // and debug builds on Windows give the main thread only 1 MB of stack.
+    let code = Box::pin(commands::dispatch(cmd, io, opts)).await;
     io.json = saved;
     code
 }
