@@ -147,6 +147,8 @@ providers keys rm openai#client-a           # the key and its saved value
 - **Any key can be removed**, the default and the only one included. Remove the only key and the provider has none (not ready). Remove the default while others remain and a request has to name a key until you choose another default.
 - **A key covers every API of the provider:** chat, images and embeddings alike. To use a different key for some requests, name it in them.
 - `openai#work` works wherever a request names a provider: `respond`, `generate`, `embed`, `upload`, `models hosted`, `providers status`, `jobs status|wait`. Python takes `key="work"` (or `"openai#work"`).
+- **In the desktop app,** the Providers tab's API key panel has a tab per key (`#work`, `#`), with **+ Add Key**, Rename, Delete and Use by Default, and Chat and Images give each key that has one its own column (`openai#work`), so one prompt can go to both.
+- **In zsh,** quote a key if you've turned on `EXTENDED_GLOB` (`'openai#work'`): it makes `#` a pattern character.
 - **A background job or an uploaded file belongs to the account that made it:** check the job, or attach the file, with the same key. Lexi prints the job command with it.
 
 ### Checking API Key Status

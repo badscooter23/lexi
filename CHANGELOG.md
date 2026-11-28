@@ -26,6 +26,13 @@ go under **Unreleased**; at release time that heading becomes the version
 - **No more separate keys for one API or model.** A key covers every API of the provider (chat, images, embeddings). An API's or a model's own key, if you had one, becomes one of the provider's named keys (`#image-generations`), used when a request names it. Lexi says so once. `--api` is gone from the key commands, and `providers add --api-key` now takes `--key-name`.
 - Lexi 0.3.0 ignores named keys and reads only a key saved before names existed.
 
+### Desktop app
+- **One tab per key.** On the Providers tab, API Key Management has a tab for each of a provider's keys, labelled the way you write them after the provider: `#work`, and `#` for a key saved before keys had names. ★ marks the default. **+ Add Key** adds a key with a name (and saves it, if you paste it); every key can be renamed, deleted, or made the default. Above the tabs, the panel says whether the provider's variable (`$OPENAI_API_KEY`) is set, which wins for a request that names no key.
+- **Edit where a key is looked for.** Each key lists the places Lexi looks for it, in order. **Add Source…** adds an environment variable, a file or a command (a password manager, say), first or last, and **Remove** takes one out of the list. Nothing is deleted from it.
+- **Two keys side by side.** In Chat and Images, a provider gets a column for each key that has one (`openai#work`, `openai#`), plus `openai ($OPENAI_API_KEY)` when the variable is set; with just one, the column is `openai`. A provider with no key isn't offered. The **>_** help writes the same `openai#work`.
+- **The Setup Wizard names the key it saves,** filled in with the provider's default key (or empty for a new provider). Its "use the environment variable" choice explains the variable and saves nothing.
+- **Opened from Finder?** Apps opened from Finder or the Dock don't see variables set in `~/.zshrc`. When the provider's variable isn't set and Lexi was opened from Finder, the key panel and the Setup Wizard say so and suggest saving a key instead.
+
 ### Models
 - **See how a provider's model list is fetched.** `lexi models hosted <provider> --schema` (Python: `lexi.models.hosted_schema`) shows the address Lexi asks and the catalog settings it uses: paging, the fields shown, and the rules that turn the listing into tags and limits. It also says whether they come from the provider's template or your providers-config.yaml. Nothing is fetched.
 
