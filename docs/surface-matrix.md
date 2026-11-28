@@ -38,6 +38,7 @@ not enforced). The wheel's engine functions (`lexi.compose_request_body`, …) w
 | Upgrade a provider to its shipped template | `upgrade_provider` | `providers upgrade` | `lexi.providers.upgrade` | — |
 | List / add / remove a provider's APIs (bindings) | `provider_apis`, `add_provider_api`, `remove_provider_api` | `providers api list`, `providers api add`, `providers api rm` | `lexi.providers.apis`, `lexi.providers.add_api`, `lexi.providers.remove_api` | — |
 | Store / show / remove an API key | `set_api_key`, `remove_api_key`, `api_key_info` | `providers api-key set`, `providers api-key show`, `providers api-key remove` | `lexi.providers.set_key`, `lexi.providers.show_key`, `lexi.providers.remove_key` | Providers (API Key Management, Setup Wizard) |
+| List / add / remove where a key is looked for | `key_source_list`, `add_key_source`, `remove_key_source` | `providers api-key source list`, `providers api-key source add`, `providers api-key source rm` | `lexi.providers.key_sources`, `lexi.providers.add_key_source`, `lexi.providers.remove_key_source` | — |
 | Check an API key | `check_api_key` | `providers status` | `lexi.providers.status` | Providers |
 | List configured models | `load_models`, `model_summaries` | `models list` | `lexi.models.list` | Models |
 | List hosted models (the catalog; classified, filterable by tag, cached) | `fetch_hosted_models`, `fetch_hosted_models_with`, `hosted_summaries`, `cached_catalog` | `models hosted` | `lexi.models.hosted` | Models |

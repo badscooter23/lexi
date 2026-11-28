@@ -190,13 +190,13 @@ fn providers_add_keys_rename_rm() {
     )
     .contains("unknown API"));
 
-    // Keys: the config lists where the key is; masked by default, set via
-    // stdin, remove.
+    // Keys: saved without the config listing them; masked by default, set
+    // via stdin, remove.
     let config = std::fs::read_to_string(h.join("providers/providers-config.yaml")).unwrap();
-    assert!(config.contains("file: providers/groq/api-key"), "{config}");
+    assert!(!config.contains("api-key"), "{config}");
     assert_eq!(
         ok(h, &["providers", "api-key", "show", "groq"]),
-        "api_key sources, in order:\n  1. providers/groq/api-key — used\nKey: gsk-**********abcd\n"
+        "Looked for in this order:\n  1. providers/groq/api-key (saved key) — used\nKey: gsk-**********abcd\n"
     );
     assert!(ok(h, &["providers", "api-key", "show", "groq", "--reveal"])
         .ends_with("Key: gsk-1234567890abcd\n"));
@@ -219,7 +219,7 @@ fn providers_add_keys_rename_rm() {
     );
     assert_eq!(
         ok(h, &["providers", "api-key", "show", "groq"]),
-        "api_key sources, in order:\n  1. providers/groq/api-key — missing: no file\nNo API key configured for groq.\n"
+        "Looked for in this order:\n  1. providers/groq/api-key (saved key) — missing: none saved\nNo API key configured for groq.\n"
     );
     // A key for one API.
     assert!(ok(
@@ -302,7 +302,167 @@ async fn providers_status_checks_the_key_live() {
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(
         v,
-        json!({"provider": "p", "status": "invalid api-key", "source": "file", "from": "providers/p/api-key"})
+        json!({"provider": "p", "status": "invalid api-key", "source": "saved", "from": "providers/p/api-key"})
+    );
+}
+
+#[test]
+fn key_sources_list_add_rm() {
+    let home = seeded_home();
+    let h = home.path();
+    assert_eq!(
+        ok(h, &["providers", "api-key", "source", "list", "openai"]),
+        "Looked for in this order:\n  1. $OPENAI_API_KEY\n  2. providers/openai/api-key (saved key; last unless api_key places it)\n"
+    );
+    assert!(ok(
+        h,
+        &[
+            "providers",
+            "api-key",
+            "source",
+            "add",
+            "openai",
+            "--file",
+            "~/keys/openai",
+            "--first"
+        ]
+    )
+    .starts_with("Updated openai's api_key.\nLooked for in this order:\n  1. ~/keys/openai\n"));
+    ok(
+        h,
+        &[
+            "providers",
+            "api-key",
+            "source",
+            "add",
+            "openai",
+            "--saved",
+            "--first",
+        ],
+    );
+    let config = std::fs::read_to_string(h.join("providers/providers-config.yaml")).unwrap();
+    assert!(config.contains("- saved\n"), "{config}");
+    let v = lexi_out(
+        h,
+        &["--json", "providers", "api-key", "source", "list", "openai"],
+    );
+    let v: Value = serde_json::from_slice(&v.stdout).unwrap();
+    let kinds: Vec<&str> = v["sources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["saved", "file", "env"]);
+
+    assert_eq!(
+        ok(
+            h,
+            &[
+                "providers",
+                "api-key",
+                "source",
+                "rm",
+                "openai",
+                "--file",
+                "~/keys/openai"
+            ]
+        ),
+        "Removed it from openai's api_key.\n"
+    );
+    assert_eq!(
+        ok(
+            h,
+            &[
+                "providers",
+                "api-key",
+                "source",
+                "rm",
+                "openai",
+                "--file",
+                "~/keys/openai"
+            ]
+        ),
+        "openai's api_key doesn't list it.\n"
+    );
+    // Exactly one place (a usage error).
+    let usage = |args: &[&str]| {
+        let o = lexi_out(h, args);
+        assert_eq!(o.status.code(), Some(2), "{args:?}");
+        stderr(&o)
+    };
+    assert!(usage(&["providers", "api-key", "source", "add", "openai"]).contains("required"));
+    assert!(usage(&[
+        "providers",
+        "api-key",
+        "source",
+        "add",
+        "openai",
+        "--env",
+        "A",
+        "--file",
+        "b"
+    ])
+    .contains("cannot be used with"));
+    assert!(fails(
+        h,
+        &[
+            "providers",
+            "api-key",
+            "source",
+            "add",
+            "openai",
+            "--command",
+            "op 'read"
+        ]
+    )
+    .contains("check its quotes"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_command_source_supplies_the_key() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer from-cmd",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": []})))
+        .mount(&server)
+        .await;
+    let home = seeded_home();
+    let h = home.path().to_path_buf();
+    std::fs::write(
+        h.join("providers/providers-config.yaml"),
+        format!(
+            "providers:\n  p:\n    url: {}/v1\n    api: chat-completions\n    api_key: []\n",
+            server.uri()
+        ),
+    )
+    .unwrap();
+    ok(
+        &h,
+        &[
+            "providers",
+            "api-key",
+            "source",
+            "add",
+            "p",
+            "--command",
+            "sh -c 'echo from-cmd'",
+        ],
+    );
+    // Showing doesn't run it; a live check does.
+    assert!(ok(&h, &["providers", "api-key", "show", "p"]).contains(
+        "1. the command `sh -c echo from-cmd` — not run: runs when a request needs the key"
+    ));
+    let mut cmd = lexi(&h);
+    cmd.args(["providers", "status", "p"]);
+    assert_eq!(
+        stdout(&run(cmd).await),
+        "p: ready (key from the command `sh -c echo from-cmd`)\n"
     );
 }
 

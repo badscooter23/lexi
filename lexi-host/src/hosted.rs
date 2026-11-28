@@ -274,7 +274,9 @@ pub async fn check_api_key(provider: &str) -> Result<KeyStatus, HostError> {
         .cloned()
         .ok_or_else(|| HostError::UnknownProvider(provider.to_string()))?;
     let eff = config::effective_config(provider, &provider_cfg)?;
-    let lookup = config::lookup_api_key(&eff)?;
+    // Check afresh: a command runs again rather than answering from memory.
+    crate::keystore::forget_commands();
+    let lookup = config::lookup_api_key(provider, &eff, true)?;
     if let Some((s, e)) = lookup.failure() {
         return Err(HostError::Config(format!(
             "couldn't read {provider}'s API key from {}: {e}",

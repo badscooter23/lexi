@@ -1,6 +1,6 @@
 # API Key Storage — Design
 
-**Status:** proposed · 2026-11-25
+**Status:** accepted · 2026-11-25 · step 1 (source model) implemented
 **Scope:** where Lexi reads API keys from and where it saves them: the CLI, the
 Python library and the desktop app (all via `lexi-host`).
 **Replaces:** the 0.3.0 rule that a saved key goes into "the first file
@@ -186,7 +186,9 @@ key is never split across two places.
 
 An API binding's or a configured model's own `api_key` replaces the provider's
 (unchanged). The saved store follows the same rules per scope: `set --api A`
-saves `<provider>/<A>`.
+saves `<provider>/<A>` (and gives the API its own `api_key: [saved]` if it used
+the provider's). A configured model's own `api_key` has **no** saved key —
+there's no command to save one; it is only what it lists.
 
 ## 5. Surfaces
 

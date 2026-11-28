@@ -539,6 +539,20 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
         "providers.show_key" => {
             admin::api_key_info(a.str("name")?, a.opt_str("api"), a.flag("reveal")).map_err(e)?
         }
+        "providers.key_sources" => {
+            cfg::key_source_list(a.str("name")?, a.opt_str("api")).map_err(e)?
+        }
+        "providers.add_key_source" => {
+            let source = a.0.get("source").cloned().unwrap_or(Value::Null);
+            cfg::add_key_source(a.str("name")?, a.opt_str("api"), &source, a.flag("first"))
+                .map_err(e)?
+        }
+        "providers.remove_key_source" => {
+            let name = a.str("name")?;
+            let source = a.0.get("source").cloned().unwrap_or(Value::Null);
+            let removed = cfg::remove_key_source(name, a.opt_str("api"), &source).map_err(e)?;
+            json!({ "provider": name, "removed": removed })
+        }
         "providers.upgrade" => {
             cfg::upgrade_provider(a.str("name")?, a.opt_str("template"), a.flag("apply"))
                 .map_err(e)?

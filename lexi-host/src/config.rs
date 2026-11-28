@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map as JsonMap, Value};
 
-use crate::keystore::{self, Lookup, Source};
+use crate::keystore::{self, Lookup, LookupOpts, Source};
 use crate::HostError;
 
 /// A JSON object map (shorthand used by the config writers).
@@ -206,11 +206,35 @@ pub fn binding_config(provider_cfg: &Value, binding: &Value) -> Result<Value, Ho
     }
     let mut eff = deep_merge(&deep_merge(&api_def, &provider), &over);
     eff["api"] = Value::from(api_name);
-    // An API's own api_key replaces the provider's (never merged).
+    // An API's own api_key replaces the provider's (never merged), and its
+    // saved key is the API's own.
     if let Some(k) = binding.get("api_key") {
         eff["api_key"] = k.clone();
+        eff[KEY_SCOPE] = serde_json::json!({ "api": api_name });
     }
     Ok(eff)
+}
+
+/// The `api_key` entry that marks where the saved key is looked in.
+pub const SAVED_SOURCE: &str = keystore::SAVED;
+
+/// In an effective config: whose `api_key` it carries, when it isn't the
+/// provider's — `{api: NAME}` (an API's own, with its own saved key) or
+/// `{model: FILE}` (a configured model's own, listed in FILE; no saved key).
+pub(crate) const KEY_SCOPE: &str = "_key_scope";
+
+/// For `cfg` (a provider entry or an effective config): the file its saved
+/// key is in (none for a model's own `api_key`), and the config files its
+/// `api_key` list comes from.
+fn key_context(home: &Path, provider: &str, cfg: &Value) -> (Option<String>, Vec<PathBuf>) {
+    let mut guard = vec![providers_config_path(home)];
+    let scope = cfg.get(KEY_SCOPE);
+    if let Some(file) = scope.and_then(|s| s.get("model")).and_then(Value::as_str) {
+        guard.push(home.join(file));
+        return (None, guard);
+    }
+    let api = scope.and_then(|s| s.get("api")).and_then(Value::as_str);
+    (Some(key_file(provider, api)), guard)
 }
 
 /// The `api_key` sources in `cfg` — a provider entry, or a binding's or
@@ -220,18 +244,41 @@ fn key_sources(cfg: &Value) -> Result<Vec<Source>, HostError> {
     keystore::parse_sources(cfg.get("api_key")).map_err(HostError::Config)
 }
 
-/// Look for the key `cfg`'s `api_key` sources lead to.
-pub(crate) fn lookup_api_key(cfg: &Value) -> Result<Lookup, HostError> {
-    Ok(keystore::lookup(&lexi_home(), &key_sources(cfg)?))
+/// Look for the key `cfg`'s `api_key` sources (then its saved key) lead
+/// to; `run_commands` false leaves `command:` sources unrun (a listing).
+pub(crate) fn lookup_api_key(
+    provider: &str,
+    cfg: &Value,
+    run_commands: bool,
+) -> Result<Lookup, HostError> {
+    lookup_api_key_in(&lexi_home(), provider, cfg, run_commands)
 }
 
-/// Resolve an API key from `cfg`'s `api_key` sources (a provider entry, or a
-/// binding's/model's effective config — pass the effective config when there
-/// is one, so an API's or model's own `api_key` applies). The first source
-/// with a key wins; a read error (an unreadable file) stops the lookup and is
-/// the error.
+fn lookup_api_key_in(
+    home: &Path,
+    provider: &str,
+    cfg: &Value,
+    run_commands: bool,
+) -> Result<Lookup, HostError> {
+    let (saved, guard) = key_context(home, provider, cfg);
+    let sources = keystore::with_saved(&key_sources(cfg)?, saved.as_deref());
+    Ok(keystore::lookup_with(
+        home,
+        &sources,
+        &LookupOpts {
+            run_commands,
+            guard,
+        },
+    ))
+}
+
+/// Resolve an API key from `cfg`'s `api_key` sources, then its saved key (a
+/// provider entry, or a binding's/model's effective config — pass the
+/// effective config when there is one, so an API's or model's own `api_key`
+/// applies). The first source with a key wins; a read error (an unreadable
+/// file, a failing command) stops the lookup and is the error.
 pub fn resolve_api_key(provider_name: &str, provider_cfg: &Value) -> Result<String, HostError> {
-    let lookup = lookup_api_key(provider_cfg)?;
+    let lookup = lookup_api_key(provider_name, provider_cfg, true)?;
     if let Some(key) = lookup.key.clone() {
         return Ok(key);
     }
@@ -239,7 +286,7 @@ pub fn resolve_api_key(provider_name: &str, provider_cfg: &Value) -> Result<Stri
         return Err(read_error(provider_name, source, err));
     }
     Err(HostError::MissingApiKey(if lookup.checked.is_empty() {
-        format!("no API key for provider {provider_name:?}: its api_key in providers-config.yaml names no source")
+        format!("no API key for provider {provider_name:?}: its api_key names no source")
     } else {
         format!(
             "no API key for provider {provider_name:?} (looked in {})",
@@ -255,29 +302,33 @@ fn read_error(provider_name: &str, source: &Source, err: &str) -> HostError {
     ))
 }
 
-/// Which kind of source the key comes from — `"env"`, `"file"`, `"config"`
-/// (a literal) — without revealing it; `None` when no source has one. Same
-/// order as [`resolve_api_key`] (a read error is an error).
+/// Which kind of source the key comes from — `"env"`, `"file"`,
+/// `"command"`, `"saved"`, `"config"` (a literal) — without revealing it;
+/// `None` when no source has one. Same order as [`resolve_api_key`] (a read
+/// error is an error), but commands aren't run: one that would be is the
+/// answer (so listing providers never sets off a password manager).
 pub fn api_key_source(
     provider_name: &str,
     provider_cfg: &Value,
 ) -> Result<Option<&'static str>, HostError> {
-    let lookup = lookup_api_key(provider_cfg)?;
+    let lookup = lookup_api_key(provider_name, provider_cfg, false)?;
     if let Some((source, err)) = lookup.failure() {
         return Err(read_error(provider_name, source, err));
     }
-    Ok(lookup.used().map(Source::kind))
+    Ok(lookup.source().map(Source::kind))
 }
 
 /// Where a saved key went (`set_api_key`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SavedKey {
-    /// The file, as providers-config.yaml names it.
+    /// Where it's kept: its key file, under `$LEXI_HOME`.
     pub location: String,
-    /// Whether that file was added to providers-config.yaml.
+    /// Whether providers-config.yaml changed: an API that used the
+    /// provider's key got its own `api_key`, or a key written in the config
+    /// was taken out.
     pub added: bool,
-    /// The source the key is now read from — another one when an earlier
-    /// source (e.g. a set environment variable) has a key.
+    /// Where the key is now read from — `location` when it's the saved key,
+    /// else an earlier source that has one (e.g. a set environment variable).
     pub used: Option<String>,
 }
 
@@ -292,8 +343,8 @@ impl SavedKey {
 }
 
 /// The `api_key` list a key operation works on: the provider's, or (with
-/// `api`) that API's own. `own` is false when the API has none and uses the
-/// provider's.
+/// `api`) that API's own, as listed (without the saved key unless it's
+/// marked). `own` is false when the API has none and uses the provider's.
 struct KeyScope {
     doc: Map,
     entry: Map,
@@ -382,58 +433,85 @@ fn write_key_file(home: &Path, raw: &str, key: &str) -> Result<(), HostError> {
     Ok(())
 }
 
-/// The source `provider`'s (or its `api`'s) key is read from now.
-fn used_source(home: &Path, provider: &str, api: Option<&str>) -> Option<String> {
-    let scope = key_scope(home, provider, api).ok()?;
-    let sources = if scope.own {
-        scope.sources
+/// The sources `provider`'s (or its `api`'s) key is looked for in — the
+/// API's own (and its saved key), else the provider's — and whether they're
+/// the API's own.
+fn scope_sources(
+    home: &Path,
+    provider: &str,
+    api: Option<&str>,
+) -> Result<(Vec<Source>, bool), HostError> {
+    let scope = key_scope(home, provider, api)?;
+    Ok(if scope.own {
+        (
+            keystore::with_saved(&scope.sources, Some(&key_file(provider, api))),
+            true,
+        )
     } else {
-        key_scope(home, provider, None).ok()?.sources
-    };
-    keystore::lookup(home, &sources)
-        .used()
-        .map(Source::describe)
+        let provider_scope = key_scope(home, provider, None)?;
+        (
+            keystore::with_saved(&provider_scope.sources, Some(&key_file(provider, None))),
+            false,
+        )
+    })
+}
+
+fn scope_lookup(home: &Path, sources: &[Source], run_commands: bool) -> Lookup {
+    keystore::lookup_with(
+        home,
+        sources,
+        &LookupOpts {
+            run_commands,
+            guard: vec![providers_config_path(home)],
+        },
+    )
+}
+
+/// Where `provider`'s (or its `api`'s) key is read from now: the saved key's
+/// file when it's the one, else the source's description (a command isn't
+/// run, so one that would be is the answer).
+fn used_source(home: &Path, provider: &str, api: Option<&str>) -> Option<String> {
+    let (sources, _) = scope_sources(home, provider, api).ok()?;
+    match scope_lookup(home, &sources, false).source()? {
+        Source::Saved(file) => Some(file.clone()),
+        other => Some(other.describe()),
+    }
 }
 
 /// What a key operation on `provider` (or its `api`) sees: the sources that
-/// apply (the API's own, else the provider's), whether they're the API's
-/// own, where a saved key would go (`adds`: that file isn't in the config
-/// yet), and what looking through the sources found.
+/// apply (the API's own, else the provider's, with the saved key in its
+/// place), whether they're the API's own, the file a saved key goes in, and
+/// what looking through the sources found (commands run only with
+/// `run_commands`).
 pub(crate) struct KeyPlan {
     pub(crate) sources: Vec<Source>,
     pub(crate) own: bool,
-    pub(crate) save_to: Source,
-    pub(crate) adds: bool,
+    pub(crate) save_to: String,
     pub(crate) lookup: Lookup,
 }
 
-pub(crate) fn key_plan(provider: &str, api: Option<&str>) -> Result<KeyPlan, HostError> {
+pub(crate) fn key_plan(
+    provider: &str,
+    api: Option<&str>,
+    run_commands: bool,
+) -> Result<KeyPlan, HostError> {
     let home = lexi_home();
-    let scope = key_scope(&home, provider, api)?;
-    let sources = if scope.own {
-        scope.sources.clone()
-    } else {
-        key_scope(&home, provider, None)?.sources
-    };
-    let (save_to, adds) = match scope.sources.iter().find(|s| s.writable()) {
-        Some(s) => (s.clone(), false),
-        None => (Source::File(key_file(provider, api)), true),
-    };
-    let lookup = keystore::lookup(&home, &sources);
+    let (sources, own) = scope_sources(&home, provider, api)?;
+    let lookup = scope_lookup(&home, &sources, run_commands);
     Ok(KeyPlan {
         sources,
-        own: scope.own,
-        save_to,
-        adds,
+        own,
+        save_to: key_file(provider, api),
         lookup,
     })
 }
 
 /// Save an API key for `provider` — or, with `api`, a key for that API only —
-/// in an owner-only file: the first file its `api_key` lists, else
-/// `providers/<name>/api-key` (`api-key-<api>` for an API), which is added to
-/// providers-config.yaml after the sources already there (a literal key in
-/// the config is replaced).
+/// as its saved key: an owner-only file, `providers/<name>/api-key`
+/// (`api-key-<api>` for an API). The sources `api_key` lists are never
+/// written. providers-config.yaml changes only when an API that used the
+/// provider's key gets its own (`api_key: [saved]`), or to take out a key
+/// written in the config itself.
 pub fn set_api_key(
     provider_name: &str,
     api: Option<&str>,
@@ -453,28 +531,31 @@ fn set_api_key_in(
         return Err(HostError::Config("API key cannot be empty".into()));
     }
     let scope = key_scope(home, provider_name, api)?;
-    let (file, added) = match scope.sources.iter().find_map(|s| match s {
-        Source::File(raw) => Some(raw.clone()),
-        _ => None,
-    }) {
-        Some(raw) => (raw, false),
-        None => (key_file(provider_name, api), true),
-    };
+    let file = key_file(provider_name, api);
     write_key_file(home, &file, key)?;
+    keystore::forget_commands();
+    let has_literal = scope
+        .sources
+        .iter()
+        .any(|s| matches!(s, Source::Literal(_)));
+    let added = has_literal || !scope.own;
     if added {
-        let mut list: Vec<Source> = scope
-            .sources
-            .iter()
-            .filter(|s| !matches!(s, Source::Literal(_)))
-            .cloned()
-            .collect();
-        list.push(Source::File(file.clone()));
+        let list: Vec<Source> = if scope.own {
+            scope
+                .sources
+                .iter()
+                .filter(|s| !matches!(s, Source::Literal(_)))
+                .cloned()
+                .collect()
+        } else {
+            vec![Source::Saved(String::new())]
+        };
         write_scope_sources(home, provider_name, scope, &list)?;
     }
     Ok(SavedKey {
+        used: used_source(home, provider_name, api),
         location: file,
         added,
-        used: used_source(home, provider_name, api),
     })
 }
 
@@ -484,10 +565,9 @@ fn uses_provider_key(provider: &str, api: &str) -> HostError {
     ))
 }
 
-/// Delete `provider`'s (or its `api`'s) saved key — the first file its
-/// `api_key` lists; providers-config.yaml is left as it is. A file outside
-/// `$LEXI_HOME` is yours, not Lexi's, and is never deleted. Returns whether
-/// there was one.
+/// Delete `provider`'s (or its `api`'s) saved key. The sources `api_key`
+/// lists (yours) and providers-config.yaml are left as they are. Returns
+/// whether there was one.
 pub fn remove_api_key(provider_name: &str, api: Option<&str>) -> Result<bool, HostError> {
     remove_api_key_in(&lexi_home(), provider_name, api)
 }
@@ -501,19 +581,8 @@ fn remove_api_key_in(
     if let (Some(a), false) = (api, scope.own) {
         return Err(uses_provider_key(provider_name, a));
     }
-    let Some(raw) = scope.sources.iter().find_map(|s| match s {
-        Source::File(raw) => Some(raw.clone()),
-        _ => None,
-    }) else {
-        return Ok(false);
-    };
-    let path = keystore::file_path(home, &raw);
-    if !path.starts_with(home) {
-        return Err(HostError::Invalid(format!(
-            "{} isn't in Lexi's folder, so Lexi won't delete it; remove it yourself or change providers-config.yaml",
-            path.display()
-        )));
-    }
+    keystore::forget_commands();
+    let path = home.join(key_file(provider_name, api));
     if path.exists() {
         std::fs::remove_file(path)?;
         return Ok(true);
@@ -521,46 +590,248 @@ fn remove_api_key_in(
     Ok(false)
 }
 
+/// The sources `provider`'s (or its `api`'s) key is looked for in, in order:
+/// `{provider, api, own, sources: [{kind, from, value, implicit?}]}` —
+/// `value` as written in providers-config.yaml; the saved key is
+/// `implicit` when the list doesn't mark its place.
+pub fn key_source_list(provider: &str, api: Option<&str>) -> Result<Value, HostError> {
+    key_source_list_in(&lexi_home(), provider, api)
+}
+
+fn key_source_list_in(home: &Path, provider: &str, api: Option<&str>) -> Result<Value, HostError> {
+    let scope = key_scope(home, provider, api)?;
+    let listed = if scope.own {
+        scope.sources.clone()
+    } else {
+        key_scope(home, provider, None)?.sources
+    };
+    let marked = listed.iter().any(|s| matches!(s, Source::Saved(_)));
+    let saved_file = key_file(provider, if scope.own { api } else { None });
+    let rows: Vec<Value> = keystore::with_saved(&listed, Some(&saved_file))
+        .iter()
+        .map(|s| {
+            let mut row = serde_json::json!({
+                "kind": s.kind(),
+                "from": s.describe(),
+                "value": s.to_value(),
+            });
+            if matches!(s, Source::Saved(_)) && !marked {
+                row["implicit"] = Value::Bool(true);
+            }
+            row
+        })
+        .collect();
+    Ok(serde_json::json!({
+        "provider": provider,
+        "api": api,
+        "own": scope.own,
+        "sources": rows,
+    }))
+}
+
+/// An `api_key` entry to add or remove, checked: `{env: VAR}`, `{file:
+/// PATH}`, `{command: [...]}` or `saved` (never a key itself).
+fn source_arg(source: &Value) -> Result<Source, HostError> {
+    match keystore::Source::parse(source).map_err(HostError::Invalid)? {
+        None => Err(HostError::Invalid("no source given".into())),
+        Some(Source::Literal(_)) => Err(HostError::Invalid(
+            "that's a key, not a place to find one: save it with `providers api-key set`".into(),
+        )),
+        Some(s) => Ok(s),
+    }
+}
+
+/// Add a place to look for `provider`'s (or, with `api`, that API's own)
+/// key: at the end of its `api_key` list, or first with `first` (one
+/// already listed moves there). An API that used the provider's key gets
+/// its own list. Returns the sources afterwards ([`key_source_list`]).
+pub fn add_key_source(
+    provider: &str,
+    api: Option<&str>,
+    source: &Value,
+    first: bool,
+) -> Result<Value, HostError> {
+    add_key_source_in(&lexi_home(), provider, api, source, first)
+}
+
+fn add_key_source_in(
+    home: &Path,
+    provider: &str,
+    api: Option<&str>,
+    source: &Value,
+    first: bool,
+) -> Result<Value, HostError> {
+    let new = source_arg(source)?;
+    let scope = key_scope(home, provider, api)?;
+    let mut list = if scope.own {
+        scope.sources.clone()
+    } else {
+        Vec::new()
+    };
+    let had = list.iter().any(|s| s.same_place(&new));
+    if !had || first {
+        list.retain(|s| !s.same_place(&new));
+        if first {
+            list.insert(0, new);
+        } else {
+            list.push(new);
+        }
+        write_scope_sources(home, provider, scope, &list)?;
+    }
+    keystore::forget_commands();
+    key_source_list_in(home, provider, api)
+}
+
+/// Stop looking in a place for `provider`'s (or its `api`'s own) key —
+/// taking it out of the `api_key` list (`saved` takes out only the marker:
+/// the saved key is looked in last again). Returns whether it was listed.
+pub fn remove_key_source(
+    provider: &str,
+    api: Option<&str>,
+    source: &Value,
+) -> Result<bool, HostError> {
+    remove_key_source_in(&lexi_home(), provider, api, source)
+}
+
+fn remove_key_source_in(
+    home: &Path,
+    provider: &str,
+    api: Option<&str>,
+    source: &Value,
+) -> Result<bool, HostError> {
+    let gone = source_arg(source)?;
+    let scope = key_scope(home, provider, api)?;
+    if let (Some(a), false) = (api, scope.own) {
+        return Err(uses_provider_key(provider, a));
+    }
+    if !scope.sources.iter().any(|s| s.same_place(&gone)) {
+        return Ok(false);
+    }
+    let list: Vec<Source> = scope
+        .sources
+        .iter()
+        .filter(|s| !s.same_place(&gone))
+        .cloned()
+        .collect();
+    write_scope_sources(home, provider, scope, &list)?;
+    keystore::forget_commands();
+    Ok(true)
+}
+
 /// One-time upgrades of an older config's `api_key` lists (best effort):
 /// - an entry still in the old single form with a key file
 ///   (`providers/<name>/api-key`, which older versions read first) gets
-///   `api_key: [{file: …}, …]`, so the same key keeps being used;
+///   `api_key: [saved, …]`, so the same key keeps being used;
 /// - a `{keychain: …}` entry (a development build kept keys in the OS
-///   keychain) becomes the key file Lexi saves that key in — empty until
-///   the key is saved again.
+///   keychain) becomes `saved`;
+/// - Lexi's own key file listed as a `{file: …}` (0.3.0 listed it when it
+///   saved a key) comes out — the saved key is looked in anyway — or becomes
+///   `saved` where it isn't last; a provider's list left equal to its
+///   template's is taken out (the template's applies).
 pub(crate) fn upgrade_key_sources(home: &Path) {
     let Ok(mut doc) = read_providers_doc(home) else {
         return;
     };
     let mut changed = false;
     for (name, entry) in providers_mut(&mut doc).iter_mut() {
-        changed |= replace_keychain_sources(name, entry);
+        changed |= replace_keychain_sources(entry);
         let legacy = matches!(entry.get("api_key"), None | Some(Value::String(_)));
-        let rel = format!("providers/{name}/api-key");
-        if !legacy || !home.join(&rel).is_file() {
-            continue;
+        if legacy && home.join(key_file(name, None)).is_file() {
+            if let Ok(resolved) = resolve_template(entry) {
+                let mut list = vec![Source::Saved(String::new())];
+                list.extend(key_sources(&resolved).unwrap_or_default());
+                if let Some(o) = entry.as_object_mut() {
+                    o.insert("api_key".into(), keystore::sources_value(&list));
+                    changed = true;
+                }
+            }
         }
-        let Ok(resolved) = resolve_template(entry) else {
-            continue;
-        };
-        let mut list = vec![Source::File(rel)];
-        list.extend(key_sources(&resolved).unwrap_or_default());
-        if let Some(o) = entry.as_object_mut() {
-            o.insert("api_key".into(), keystore::sources_value(&list));
-            changed = true;
-        }
+        changed |= unlist_own_key_files(home, name, entry);
     }
     if changed {
         let _ = write_yaml(&providers_config_path(home), &Value::Object(doc));
     }
 }
 
-/// In a raw provider entry, each `{keychain: …}` in its `api_key` (and its
-/// APIs') becomes that scope's key file, listed once. Whether anything
-/// changed.
-fn replace_keychain_sources(provider: &str, entry: &mut Value) -> bool {
+/// In a raw provider entry, Lexi's own key file listed in its `api_key` (and
+/// its APIs') comes out — or becomes `saved` when sources follow it — and a
+/// trailing `saved` goes (it's where the saved key is anyway). A provider
+/// list left the same as its template's is removed; an API's left empty
+/// stays as `[saved]` (it still has its own key). Whether anything changed.
+fn unlist_own_key_files(home: &Path, provider: &str, entry: &mut Value) -> bool {
+    let tidy = |list: &[Source], own: &str| -> Option<Vec<Source>> {
+        let own_path = home.join(own);
+        let is_own =
+            |s: &Source| matches!(s, Source::File(f) if keystore::file_path(home, f) == own_path);
+        if !list.iter().any(is_own) {
+            return None;
+        }
+        let mut out: Vec<Source> = Vec::new();
+        for s in list {
+            let s = if is_own(s) {
+                Source::Saved(String::new())
+            } else {
+                s.clone()
+            };
+            if !(matches!(s, Source::Saved(_)) && out.iter().any(|o| matches!(o, Source::Saved(_))))
+            {
+                out.push(s);
+            }
+        }
+        if matches!(out.last(), Some(Source::Saved(_))) {
+            out.pop();
+        }
+        Some(out)
+    };
     let mut changed = false;
-    let mut fix = |v: &mut Value, file: String| {
+    if let Ok(list) = keystore::parse_sources(entry.get("api_key")) {
+        if let Some(out) = tidy(&list, &key_file(provider, None)) {
+            let mut without = entry.clone();
+            if let Some(o) = without.as_object_mut() {
+                o.shift_remove("api_key");
+            }
+            let template_list = resolve_template(&without)
+                .ok()
+                .and_then(|r| key_sources(&r).ok());
+            if let Some(o) = entry.as_object_mut() {
+                if template_list.as_ref() == Some(&out) && entry_has_template(o) {
+                    o.shift_remove("api_key");
+                } else {
+                    o.insert("api_key".into(), keystore::sources_value(&out));
+                }
+            }
+            changed = true;
+        }
+    }
+    if let Some(apis) = entry.get_mut("apis").and_then(Value::as_array_mut) {
+        for b in apis.iter_mut().filter(|b| b.get("api_key").is_some()) {
+            let Some(api) = b.get("api").and_then(Value::as_str).map(String::from) else {
+                continue;
+            };
+            let Ok(list) = keystore::parse_sources(b.get("api_key")) else {
+                continue;
+            };
+            if let Some(mut out) = tidy(&list, &key_file(provider, Some(&api))) {
+                if out.is_empty() {
+                    out.push(Source::Saved(String::new()));
+                }
+                b["api_key"] = keystore::sources_value(&out);
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+fn entry_has_template(entry: &Map) -> bool {
+    entry.get("template").and_then(Value::as_str).is_some()
+}
+
+/// In a raw provider entry, each `{keychain: …}` in its `api_key` (and its
+/// APIs') becomes `saved`, listed once. Whether anything changed.
+fn replace_keychain_sources(entry: &mut Value) -> bool {
+    let mut changed = false;
+    let mut fix = |v: &mut Value| {
         let items: Vec<Value> = match v.get("api_key") {
             Some(Value::Array(a)) => a.clone(),
             Some(one) => vec![one.clone()],
@@ -572,7 +843,7 @@ fn replace_keychain_sources(provider: &str, entry: &mut Value) -> bool {
         let mut out: Vec<Value> = Vec::new();
         for item in items {
             let item = if item.get("keychain").is_some() {
-                serde_json::json!({ "file": file })
+                Value::from(keystore::SAVED)
             } else {
                 item
             };
@@ -583,12 +854,10 @@ fn replace_keychain_sources(provider: &str, entry: &mut Value) -> bool {
         v["api_key"] = Value::Array(out);
         changed = true;
     };
-    fix(entry, key_file(provider, None));
+    fix(entry);
     if let Some(apis) = entry.get_mut("apis").and_then(Value::as_array_mut) {
         for b in apis.iter_mut() {
-            if let Some(api) = b.get("api").and_then(Value::as_str).map(String::from) {
-                fix(b, key_file(provider, Some(&api)));
-            }
+            fix(b);
         }
     }
     changed
@@ -2344,12 +2613,10 @@ mod tests {
 
         set_api_key_in(home, "mid", None, "mid-key").unwrap();
         rename_provider_in(home, "mid", "middle").unwrap();
-        // Key files Lexi saved follow the provider to its new name.
+        // Key files Lexi saved follow the provider to its new name, and the
+        // config doesn't list them.
         assert!(home.join("providers/middle/api-key").exists());
-        assert_eq!(
-            entry_key(home, "middle"),
-            json!([{"file": "providers/middle/api-key"}])
-        );
+        assert!(entry_key(home, "middle").is_null());
         rename_provider_in(home, "first", "alpha").unwrap();
         assert!(rename_provider_in(home, "nope", "x").is_err());
         assert!(rename_provider_in(home, "alpha", "last").is_err());
@@ -2459,32 +2726,140 @@ mod tests {
         let Err(e) = key_sources(&json!({"api_key": [{"keychain": "openai"}]})) else {
             panic!("a keychain entry is an error");
         };
+        assert!(e.to_string().contains("list it as `saved`"), "{e}");
+
+        // The marker `saved` and commands parse; a command needs a program.
         assert!(
-            e.to_string().contains("doesn't use the system keychain"),
-            "{e}"
+            key_sources(&json!({"api_key": ["saved", {"command": ["echo", "k"]}]})).unwrap()
+                == [
+                    Source::Saved(String::new()),
+                    Source::Command(vec!["echo".into(), "k".into()])
+                ]
         );
+        assert!(key_sources(&json!({"api_key": {"command": []}})).is_err());
+        assert!(key_sources(&json!({"api_key": {"command": "echo k"}})).is_err());
     }
 
     #[test]
-    fn saving_uses_the_listed_file_or_adds_one() {
+    fn the_saved_key_comes_after_the_listed_sources_unless_marked() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        std::fs::create_dir_all(home.join("providers/p")).unwrap();
+        std::fs::write(home.join("providers/p/api-key"), "saved-key\n").unwrap();
+        std::fs::write(home.join("mine.key"), "mine\n").unwrap();
+        let found = |cfg: Value| lookup_api_key_in(home, "p", &cfg, true).unwrap();
+
+        // Last by default: a listed source with a key wins.
+        let last = found(json!({"api_key": [{"file": "mine.key"}]}));
+        assert_eq!(last.key.as_deref(), Some("mine"));
+        assert!(last.checked[1].0 == Source::Saved("providers/p/api-key".into()));
+        assert_eq!(last.checked[1].1.state(), "not checked");
+        // Marked first, it wins.
+        let first = found(json!({"api_key": ["saved", {"file": "mine.key"}]}));
+        assert_eq!(first.key.as_deref(), Some("saved-key"));
+        assert_eq!(first.used().map(Source::kind), Some("saved"));
+        // An empty list still has the saved key; none saved is "missing".
+        assert_eq!(
+            found(json!({"api_key": []})).key.as_deref(),
+            Some("saved-key")
+        );
+        let none = lookup_api_key_in(home, "q", &json!({}), true).unwrap();
+        assert_eq!(none.summary(), "providers/q/api-key (none saved)");
+        // A model's own api_key has no saved key.
+        let model =
+            json!({"api_key": [], KEY_SCOPE: {"model": "providers/p/configured-models.yaml"}});
+        assert!(found(model).checked.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_command_prints_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        write_providers(home, "providers: {}\n");
+        let sh = |script: &str| json!({"command": ["sh", "-c", script]});
+        let found = |cfg: Value, run: bool| lookup_api_key_in(home, "p", &cfg, run).unwrap();
+
+        let ok = found(json!({"api_key": [sh("echo '  cmd-key  '")]}), true);
+        assert_eq!(ok.key.as_deref(), Some("cmd-key"));
+        assert_eq!(ok.used().map(Source::kind), Some("command"));
+        // Remembered: a listing (commands not run) knows it now.
+        let listed = found(json!({"api_key": [sh("echo '  cmd-key  '")]}), false);
+        assert_eq!(listed.key.as_deref(), Some("cmd-key"));
+        keystore::forget_commands();
+
+        // Not run: it decides the lookup without a key.
+        let not_run = found(
+            json!({"api_key": [sh("echo other"), {"env": "PATH"}]}),
+            false,
+        );
+        assert_eq!(not_run.key, None);
+        assert_eq!(not_run.source().map(Source::kind), Some("command"));
+        assert_eq!(not_run.checked[1].1.state(), "not checked");
+
+        // Printing nothing moves on; failing stops, with stderr (not stdout).
+        let empty = found(json!({"api_key": [sh("true"), {"env": "PATH"}]}), true);
+        assert_eq!(
+            empty.checked[0].1.note().as_deref(),
+            Some("printed nothing")
+        );
+        assert_eq!(empty.used().map(Source::kind), Some("env"));
+        let failed = found(
+            json!({"api_key": [sh("echo secret; echo 'locked vault' >&2; exit 3"), {"env": "PATH"}]}),
+            true,
+        );
+        let (_, err) = failed.failure().unwrap();
+        assert_eq!(err, "`sh` exited with status 3: locked vault");
+        assert_eq!(failed.key, None);
+        let missing = found(
+            json!({"api_key": {"command": ["lexi-no-such-program-x"]}}),
+            true,
+        );
+        assert!(missing
+            .failure()
+            .unwrap()
+            .1
+            .starts_with("couldn't run `lexi-no-such-program-x`"));
+        let slow = found(json!({"api_key": [sh("sleep 5")]}), true);
+        assert!(slow
+            .failure()
+            .unwrap()
+            .1
+            .contains("didn't finish within 2 seconds"));
+
+        // Not from a config other users can change.
+        use std::os::unix::fs::PermissionsExt;
+        let cfg_file = providers_config_path(home);
+        std::fs::set_permissions(&cfg_file, std::fs::Permissions::from_mode(0o666)).unwrap();
+        let refused = found(json!({"api_key": [sh("echo k2")]}), true);
+        assert!(refused.failure().unwrap().1.contains("chmod go-w"));
+        std::fs::set_permissions(&cfg_file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            found(json!({"api_key": [sh("echo k2")]}), true)
+                .key
+                .as_deref(),
+            Some("k2")
+        );
+        keystore::forget_commands();
+    }
+
+    #[test]
+    fn saving_goes_to_the_saved_key_never_a_listed_file() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         write_providers(
             home,
             "providers:\n  p:\n    url: u\n    api_key: ${LEXI_TEST_SURELY_UNSET_VAR}\n  q:\n    url: u\n    api_key: sk-literal\n  m:\n    url: u\n    api_key: [{file: my-keys/m.key}]\n",
         );
+        let before = std::fs::read_to_string(providers_config_path(home)).unwrap();
 
-        // No file listed: the provider's key file is added after the variable.
+        // The provider's key file; the config doesn't change.
         let saved = set_api_key_in(home, "p", None, " k1 ").unwrap();
         assert_eq!(
             (saved.location.as_str(), saved.added),
-            ("providers/p/api-key", true)
+            ("providers/p/api-key", false)
         );
         assert_eq!(saved.used.as_deref(), Some("providers/p/api-key"));
-        assert_eq!(
-            entry_key(home, "p"),
-            json!([{"env": "LEXI_TEST_SURELY_UNSET_VAR"}, {"file": "providers/p/api-key"}])
-        );
         assert_eq!(
             std::fs::read_to_string(home.join("providers/p/api-key")).unwrap(),
             "k1\n"
@@ -2498,40 +2873,101 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
-        // Saving again writes the same file; the config doesn't change.
         assert!(!set_api_key_in(home, "p", None, "k2").unwrap().added);
 
-        // A literal key in the config is replaced; a listed file is used.
-        set_api_key_in(home, "q", None, "k3").unwrap();
-        assert_eq!(
-            entry_key(home, "q"),
-            json!([{"file": "providers/q/api-key"}])
-        );
+        // A listed file is yours: never written, and it still comes first.
+        std::fs::create_dir_all(home.join("my-keys")).unwrap();
+        std::fs::write(home.join("my-keys/m.key"), "mine\n").unwrap();
         let mine = set_api_key_in(home, "m", None, "k4").unwrap();
+        assert_eq!(mine.location, "providers/m/api-key");
+        assert_eq!(mine.used.as_deref(), Some("my-keys/m.key"));
         assert_eq!(
-            (mine.location.as_str(), mine.added),
-            ("my-keys/m.key", false)
+            std::fs::read_to_string(home.join("my-keys/m.key")).unwrap(),
+            "mine\n"
         );
-        assert!(home.join("my-keys/m.key").exists());
+        let after_p_m = std::fs::read_to_string(providers_config_path(home)).unwrap();
+        assert_eq!(after_p_m, before);
+
+        // A key written in the config is taken out.
+        let q = set_api_key_in(home, "q", None, "k3").unwrap();
+        assert!(q.added);
+        assert_eq!(entry_key(home, "q"), json!([]));
         assert!(set_api_key_in(home, "q", None, "  ").is_err());
         assert!(set_api_key_in(home, "nope", None, "k").is_err());
 
-        // Remove deletes the saved key and leaves the config as it is.
-        assert!(remove_api_key_in(home, "p", None).unwrap());
-        assert!(!remove_api_key_in(home, "p", None).unwrap());
-        assert_eq!(entry_key(home, "p").as_array().unwrap().len(), 2);
+        // Remove deletes the saved key only.
+        assert!(remove_api_key_in(home, "m", None).unwrap());
+        assert!(!remove_api_key_in(home, "m", None).unwrap());
+        assert!(home.join("my-keys/m.key").exists());
+    }
 
-        // A file outside Lexi's folder is never deleted.
-        let outside = tempfile::NamedTempFile::new().unwrap();
-        write_providers(
-            home,
-            &format!(
-                "providers:\n  r:\n    url: u\n    api_key: {{file: {}}}\n",
-                outside.path().display()
-            ),
+    #[test]
+    fn sources_can_be_added_and_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        write_providers(home, "providers:\n  openai:\n    template: openai\n");
+        let kinds = |v: &Value| -> Vec<String> {
+            v["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r["from"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let listed = key_source_list_in(home, "openai", None).unwrap();
+        assert_eq!(
+            kinds(&listed),
+            ["$OPENAI_API_KEY", "providers/openai/api-key"]
         );
-        assert!(remove_api_key_in(home, "r", None).is_err());
-        assert!(outside.path().exists());
+        assert_eq!(listed["sources"][1]["implicit"], true);
+
+        let after =
+            add_key_source_in(home, "openai", None, &json!({"file": "~/k"}), false).unwrap();
+        assert_eq!(kinds(&after)[1], "~/k");
+        let after = add_key_source_in(home, "openai", None, &json!("saved"), true).unwrap();
+        assert_eq!(kinds(&after)[0], "providers/openai/api-key");
+        assert!(after["sources"][0].get("implicit").is_none());
+        assert_eq!(
+            entry_key(home, "openai"),
+            json!(["saved", {"env": "OPENAI_API_KEY"}, {"file": "~/k"}])
+        );
+        // Adding one that's listed changes nothing; with first it moves.
+        add_key_source_in(home, "openai", None, &json!({"file": "~/k"}), false).unwrap();
+        add_key_source_in(home, "openai", None, &json!({"file": "~/k"}), true).unwrap();
+        assert_eq!(entry_key(home, "openai")[0], json!({"file": "~/k"}));
+        // A key itself isn't a source.
+        assert!(add_key_source_in(home, "openai", None, &json!("sk-123"), false).is_err());
+
+        assert!(remove_key_source_in(home, "openai", None, &json!("saved")).unwrap());
+        assert!(
+            remove_key_source_in(home, "openai", None, &json!({"env": "OPENAI_API_KEY"})).unwrap()
+        );
+        assert!(
+            !remove_key_source_in(home, "openai", None, &json!({"env": "OPENAI_API_KEY"})).unwrap()
+        );
+        assert_eq!(entry_key(home, "openai"), json!([{"file": "~/k"}]));
+
+        // An API that used the provider's key gets a list of its own.
+        assert!(
+            remove_key_source_in(home, "openai", Some("image-generations"), &json!("saved"))
+                .is_err()
+        );
+        let own = add_key_source_in(
+            home,
+            "openai",
+            Some("image-generations"),
+            &json!({"command": ["op", "read", "op://x"]}),
+            false,
+        )
+        .unwrap();
+        assert_eq!(own["own"], true);
+        assert_eq!(
+            kinds(&own),
+            [
+                "the command `op read op://x`",
+                "providers/openai/api-key-image-generations"
+            ]
+        );
     }
 
     #[test]
@@ -2554,18 +2990,29 @@ mod tests {
         assert_eq!(saved.location, "providers/p/api-key-embeddings");
         let doc = read_providers_doc(home).unwrap();
         let entry = &doc["providers"]["p"];
-        assert_eq!(
-            entry["apis"][1]["api_key"],
-            json!([{"file": "providers/p/api-key-embeddings"}])
-        );
+        assert_eq!(entry["apis"][1]["api_key"], json!(["saved"]));
         assert_eq!(entry["apis"][1]["for"], json!(["kind:embedding"]));
         assert_eq!(entry["api_key"], json!({"file": "main.key"}));
+        assert!(
+            !set_api_key_in(home, "p", Some("embeddings"), "emb-key")
+                .unwrap()
+                .added
+        );
 
-        // The binding's effective config carries its own list, not the provider's.
+        // The binding's effective config carries its own list and saved key,
+        // not the provider's.
         let eff = binding_config(entry, &entry["apis"][1]).unwrap();
-        assert_eq!(lookup_in(home, &eff).key.as_deref(), Some("emb-key"));
+        let found = lookup_api_key_in(home, "p", &eff, true).unwrap();
+        assert_eq!(found.key.as_deref(), Some("emb-key"));
+        assert!(found.used() == Some(&Source::Saved("providers/p/api-key-embeddings".into())));
         let chat = binding_config(entry, &entry["apis"][0]).unwrap();
-        assert_eq!(lookup_in(home, &chat).key.as_deref(), Some("main-key"));
+        assert_eq!(
+            lookup_api_key_in(home, "p", &chat, true)
+                .unwrap()
+                .key
+                .as_deref(),
+            Some("main-key")
+        );
     }
 
     #[test]
@@ -2583,7 +3030,7 @@ mod tests {
         upgrade_key_sources(home);
         assert_eq!(
             entry_key(home, "openai"),
-            json!([{"file": "providers/openai/api-key"}, {"env": "OPENAI_API_KEY"}])
+            json!(["saved", {"env": "OPENAI_API_KEY"}])
         );
         // No key file, or already the new form: left alone.
         assert!(entry_key(home, "nvidia").is_null());
@@ -2597,35 +3044,62 @@ mod tests {
     }
 
     #[test]
-    fn keychain_entries_become_key_files() {
+    fn keychain_entries_become_saved() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         write_providers(
             home,
-            "providers:\n  openai:\n    template: openai\n    api_key: [{keychain: openai}, {env: OPENAI_API_KEY}]\n    apis:\n      - api: image-generations\n        api_key: {keychain: openai/image-generations}\n  both:\n    url: u\n    api_key: [{file: providers/both/api-key}, {keychain: both}]\n",
+            "providers:\n  openai:\n    template: openai\n    api_key: [{keychain: openai}, {env: OPENAI_API_KEY}]\n    apis:\n      - api: image-generations\n        api_key: {keychain: openai/image-generations}\n  both:\n    url: u\n    api_key: [{file: providers/both/api-key}, {keychain: both}, {env: B}]\n",
         );
         upgrade_key_sources(home);
         assert_eq!(
             entry_key(home, "openai"),
-            json!([{"file": "providers/openai/api-key"}, {"env": "OPENAI_API_KEY"}])
+            json!(["saved", {"env": "OPENAI_API_KEY"}])
         );
         let doc = read_providers_doc(home).unwrap();
         assert_eq!(
             doc["providers"]["openai"]["apis"][0]["api_key"],
-            json!([{"file": "providers/openai/api-key-image-generations"}])
+            json!(["saved"])
         );
         // Listed once, where the file already was.
-        assert_eq!(
-            entry_key(home, "both"),
-            json!([{"file": "providers/both/api-key"}])
-        );
-        // The provider reads its key file again: saving one makes it work.
+        assert_eq!(entry_key(home, "both"), json!(["saved", {"env": "B"}]));
         let resolved = resolve_template(&doc["providers"]["openai"]).unwrap();
         assert!(key_sources(&resolved).is_ok());
-        set_api_key_in(home, "openai", None, "sk-new").unwrap();
+    }
+
+    #[test]
+    fn lexis_own_key_files_come_out_of_the_lists() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        // What 0.3.0 wrote when it saved keys.
+        write_providers(
+            home,
+            "providers:\n  openai:\n    template: openai\n    api_key: [{env: OPENAI_API_KEY}, {file: providers/openai/api-key}]\n    apis:\n      - api: image-generations\n        api_key: [{file: providers/openai/api-key-image-generations}]\n  anthropic:\n    template: anthropic\n    api_key: [{file: providers/anthropic/api-key}, {env: ANTHROPIC_API_KEY}]\n  mine:\n    url: u\n    api_key: [{env: X}, {file: providers/mine/api-key}, {file: ~/elsewhere.key}]\n",
+        );
+        upgrade_key_sources(home);
+        let doc = read_providers_doc(home).unwrap();
+        // Equal to the template's list now: taken out.
+        assert!(doc["providers"]["openai"].get("api_key").is_none());
+        // An API's own list keeps saying it has its own key.
         assert_eq!(
-            entry_key(home, "openai"),
-            json!([{"file": "providers/openai/api-key"}, {"env": "OPENAI_API_KEY"}])
+            doc["providers"]["openai"]["apis"][0]["api_key"],
+            json!(["saved"])
+        );
+        // First, or followed by another source: it becomes the marker.
+        assert_eq!(
+            entry_key(home, "anthropic"),
+            json!(["saved", {"env": "ANTHROPIC_API_KEY"}])
+        );
+        assert_eq!(
+            entry_key(home, "mine"),
+            json!([{"env": "X"}, "saved", {"file": "~/elsewhere.key"}])
+        );
+        // Once only.
+        let before = std::fs::read_to_string(providers_config_path(home)).unwrap();
+        upgrade_key_sources(home);
+        assert_eq!(
+            std::fs::read_to_string(providers_config_path(home)).unwrap(),
+            before
         );
     }
 
