@@ -529,9 +529,10 @@ they should all behave the same way.
      it's a named key like the rest.
    - Nothing can create a new unnamed key. Once a provider's unnamed key is
      renamed or deleted, `openai#` is an error for that provider.
-2. **A provider needs a key to be used,** and the key has to be valid for a
-   request to succeed. A provider with no key, or whose key finds nothing in
-   its sources, is **not ready** until a key is provided.
+2. **A provider needs a key to be used,** a stored key or its variable
+   (rule 5), and the key has to be valid for a request to succeed. A provider
+   with neither, or whose key finds nothing in its sources, is **not ready**
+   until a key is provided.
 3. **One key is the default (★).** A request that names no key uses it.
    - A provider with exactly one key always has it as the default.
    - With several keys, `default_key` names the default.
@@ -544,17 +545,36 @@ they should all behave the same way.
      the provider's status says so. With one key left, that key is the
      default (rule 3).
    - Renaming the default keeps it the default.
+5. **The provider's environment variable is not a key.** `$OPENAI_API_KEY`
+   (the variable the provider's template names) is a key handed to one
+   process, by a script, a CI job or `OPENAI_API_KEY=… lexi …`, with nothing
+   stored.
+   - It isn't one of the provider's keys: it has no tab, isn't in `providers
+     keys list`, and can't be renamed or deleted. Lexi doesn't own it.
+   - **When it's set, it wins** for a request that names no key, over the ★
+     default. That's how the OpenAI and Anthropic SDKs treat their variables,
+     and it lets a script override your stored default without touching
+     your setup.
+   - **A request that names a key** (`openai#projectx`) uses that key, set
+     variable or not.
+   - Nothing needs a stored key for the variable to work. A provider with no
+     keys and the variable set is ready.
+   - A key's *own* sources may still list variables (`keys.personal.api_key:
+     [{env: PERSONAL_OPENAI_KEY}]`). That's where that key's value is
+     kept, and it's separate from this rule.
 
 ### 12.3 Config
 
 Named keys live under `keys`. The provider's own `api_key` and saved slot
-belong to the unnamed key (§12.2 rule 1), and only while it exists.
+belong to the unnamed key (§12.2 rule 1), and only while it exists. The
+template's `api_key` (`${OPENAI_API_KEY}`) names the provider's variable
+(rule 5), not a key.
 
 ```yaml
 providers:
   openai:
     template: openai
-    api_key: [saved, {env: OPENAI_API_KEY}]  # the unnamed key (openai#), if you had one
+    api_key: [saved]                         # the unnamed key (openai#), if you had one
     keys:
       personal:                              # a named key: its own sources...
         api_key: [{command: [op, read, "op://Private/OpenAI/credential"]}]
@@ -566,18 +586,17 @@ providers:
   (§4.3, slot `openai#<name>[@home]`, or `providers/openai/keys/<name>` with
   no store), exactly as §11.3 and §11.5 describe named keys.
 - **The unnamed key** keeps today's storage: its sources are the provider's
-  `api_key` (with the template's), and its saved key is in the provider's slot
+  `api_key` (without the provider's variable, which rule 5 covers), and its
+  saved key is in the provider's slot
   (`openai[@home]`, `providers/openai/api-key`). Lexi 0.3.0 reads it, so a
   downgrade keeps working until it's renamed. **Renaming** it moves it into
   `keys` and the named slot (read back first, as in §6), like any key.
-- **Deleting the unnamed key** deletes its saved key, and sets the
-  provider's `api_key` to `[]` so a template's `$OPENAI_API_KEY` doesn't
-  bring it back.
-- *Under discussion (§12.9 Q1):* a fresh install and a new provider: whether
-  they start with a key at all, and how `$OPENAI_API_KEY` fits. The draft
-  had each new provider seeded with a key `main` whose sources are the
-  template's variable and its saved key, with a template's `api_key` used
-  only as the sources the first key starts with.
+- **Deleting the unnamed key** deletes its saved key and the provider's own
+  `api_key` list.
+- **A fresh install, and a new provider, start with no keys.** Lexi creates
+  no key and picks no name. The provider is ready if its variable is set,
+  and otherwise not ready until you add a named key. Every key is one you
+  named.
 - **An API binding's or configured model's own `api_key`** (§4.6) still
   overrides the key, but only for a request that uses the **default** key.
   A request that names a key uses that key for every API. This keeps
@@ -588,10 +607,16 @@ providers:
 1. The key the request names: `--key projectx`, `key=`, `openai#projectx`,
    or the desktop column. `openai#` names the unnamed key (rule 1). An
    unknown name is an error that lists the keys.
-2. Otherwise a configured model's own `api_key`, then an API binding's own,
-   then the **default** key (§12.2 rule 3).
-3. No key at all, or several and no default, is the "not ready" error, never
-   a silent fallback to some other key.
+2. Otherwise, in order:
+   - a configured model's own `api_key`, then an API binding's own (§12.3:
+     set up because that model or API needs a different key, which the
+     provider's variable wouldn't be either);
+   - **the provider's variable, when it's set** (§12.2 rule 5);
+   - the **default** key (§12.2 rule 3).
+3. Nothing at all, or several keys with no default and no variable, is the
+   "not ready" error, never a silent fallback to some other key.
+4. Lexi says what it used: `-v` prints `key: $OPENAI_API_KEY` or `key:
+   #projectx`. Status and the desktop app say the same (§12.5, §12.6).
 
 ### 12.5 Commands
 
@@ -605,8 +630,8 @@ uses the default (§12.4). Nothing that changes a key is ever applied to
 | `api-key set` | Saves that key's value, and creates the key if it's new | **Refused** |
 | `api-key remove` | Deletes that key's saved value (the key stays, not ready) | **Refused** |
 | `api-key source add\|rm` | Edits that key's sources | **Refused** |
-| `api-key show`, `api-key source list` | That key | **Every** key, ★ on the default |
-| `providers status` | Checks that key | Checks **every** key (and says whether requests with no key would work: is there a default, and is it ready?) |
+| `api-key show`, `api-key source list` | That key | **Every** key, ★ on the default, and the provider's variable (set or not) |
+| `providers status` | Checks that key | Checks **every** key and the variable if it's set, and says what a request with no key would use: "requests that name no key use $OPENAI_API_KEY (from your environment)", or "… use #projectx ★", or why there's nothing |
 | `providers keys add\|rename\|rm\|default` | Take the key name as an argument, as in §11.7 | — |
 | Requests (`respond`, `generate`, `embed`, `upload`, `models hosted`, `jobs`) | That key | The **default** key, or the "not ready" error (§12.4) |
 
@@ -627,9 +652,13 @@ uses the default (§12.4). Nothing that changes a key is ever applied to
   - requests take `key=`;
   - `key="default"` goes, and `providers.set_default_key(name, key)` needs a
     key.
-- **JSON:** `key_names` rows stay `{name, default, source, from}`, with every
-  `name` a string. A provider result gains `ready` / `reason` (`no key`, `no
-  default key`, `no key found`).
+- **JSON:**
+  - `key_names` rows stay `{name, default, source, from}`, with `name` `""`
+    for the unnamed key;
+  - a new `variable: {name, set}` gives the provider's variable;
+  - a provider result gains `ready`, `uses` (`{variable: NAME}` or `{key:
+    NAME}`, what a request with no key would use) and `reason` (`no key`,
+    `no default key`, `no key found`).
 
 ### 12.6 Desktop
 
@@ -639,15 +668,23 @@ uses the default (§12.4). Nothing that changes a key is ever applied to
   Rename it to give it one." ★ marks the default. Every tab has
   **Rename…** and **Delete Key**, plus **Use by Default** on the others.
   **+ Add Key** asks for a name and, optionally, the key.
-- **A provider with no key** shows "Not ready: add a key" in the panel, and
-  isn't offered in Chat or Images.
-- **Chat and Images** show one column per key when there are several, each
-  `openai#NAME` (the unnamed key's is `openai#`), and just `openai` when
-  there's one. No column is called "default".
-- **The Setup Wizard** always saves a named key. It shows the key's name,
-  filled in with the provider's only key (or its default) and changeable.
-  What it suggests for a provider with no key waits on §12.9 Q1. Every panel
-  action works on the open tab's key, by name.
+- **The provider's variable** shows as a line above the tabs, not as a tab:
+  "$OPENAI_API_KEY is set: requests that name no key use it", or "…isn't
+  set". The Finder hint (§5) belongs here: an app opened from Finder doesn't
+  see `~/.zshrc`.
+- **A provider with no key** (no stored key, variable not set) shows "Not
+  ready: add a key" in the panel, and isn't offered in Chat or Images.
+- **Chat and Images:**
+  - one column per stored key, each `openai#NAME` (the unnamed key's is
+    `openai#`);
+  - plus `openai ($OPENAI_API_KEY)` when the variable is set;
+  - with only one of these, just `openai`;
+  - no column is called "default".
+- **The Setup Wizard** always saves a named key. The name field is filled in
+  with the provider's only key (or its default), and empty for a provider
+  with no key. Its "use the environment variable" choice explains the
+  variable and creates no key. Every panel action works on the open tab's
+  key, by name.
 
 ### 12.7 Migration and compatibility
 
@@ -659,15 +696,25 @@ uses the default (§12.4). Nothing that changes a key is ever applied to
   absent means the unnamed key, while there is one), so a request that
   worked before keeps working. Make another key the default whenever you
   like.
+- **The provider's variable comes out of the unnamed key's list.** 0.3.0
+  configs list it there (`api_key: [saved, {env: OPENAI_API_KEY}]`), after
+  the saved key. Rule 5 now checks it first, so `ensure_home` drops it from
+  the list once (other variables a list names stay).
+  - **This changes which key wins:** where both the saved key and
+    `$OPENAI_API_KEY` are set, a request that names no key now uses the
+    variable. The release notes say so.
+  - Anyone who wants the stored key can unset the variable, or name the
+    key.
 - **§11 development-build configs:** `default_key: default` becomes "the
   unnamed key", and `openai#default` in a command is refused with a hint to
   write `openai#`.
 
 **Downgrading to 0.3.0** keeps working while the original key is unnamed:
-0.3.0 reads the provider's own slot. Once it's renamed, or for keys added
-later, 0.3.0 finds nothing. As in §6, the release notes say to run
-`providers api-key show --reveal` first. A key that comes only from
-`$OPENAI_API_KEY` works in both.
+0.3.0 reads the provider's own slot. 0.3.0 doesn't see the variable, now
+taken out of the list, but its template still reads `${OPENAI_API_KEY}` when
+`api_key` is absent. Once the key is renamed, or for keys added later, 0.3.0
+finds nothing. As in §6, the release notes say to run `providers api-key
+show --reveal` first.
 
 **Commands from 0.3.0:** `lexi providers api-key set openai`, `remove` and
 `source add|rm` without a key name now fail, with the message from §12.5
@@ -677,18 +724,24 @@ getting-started and the release notes change to match.
 
 ### 12.8 Rollout
 
-1. **Host, CLI and Python:** the unnamed key as `openai#` (and renaming it
-   into `keys`), the name-required commands, the default rules, the "not
-   ready" reasons, removing `default` as a name, and whatever §12.9 Q1
-   settles for new providers.
+1. **Host, CLI and Python:**
+   - the unnamed key as `openai#` (and renaming it into `keys`);
+   - the provider's variable as its own rule, winning when set, and coming
+     out of the unnamed key's list;
+   - the name-required commands and the default rules;
+   - `ready` / `uses` / `reason`;
+   - removing `default` as a name;
+   - no seeded keys.
 2. **Desktop:** #85 reworked to match §12.6.
 
 ### 12.9 Open questions
 
-1. **Fresh installs and new providers** (being discussed next): should a
-   provider start with a key at all? If it does, what is it called and does
-   it read `$OPENAI_API_KEY`? If it doesn't, every provider is not ready
-   until you add a named key, and the variable is a source you add to it.
-2. **API and model own keys** (§12.3): keep them as overrides of the default
-   key only, as proposed, or drop them now that a key can be chosen per
-   request?
+1. **API and model own keys** (§12.3, §12.4): keep them as overrides for a
+   request that names no key, ahead of the variable, as proposed, or drop
+   them now that a key can be chosen per request?
+
+Decided 2026-11-28, besides §12.2:
+- **No starter keys.** A fresh install and a new provider have no keys (§12.3).
+  Lexi never picks a name.
+- **The provider's variable wins** over the ★ default for a request that
+  names no key (rule 5).
