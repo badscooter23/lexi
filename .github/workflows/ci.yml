@@ -73,8 +73,9 @@ jobs:
     name: host (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     env:
-      # macOS: also test saved keys against a throw-away keychain.
-      LEXI_TEST_KEYCHAIN: ${{ matrix.os == 'macos-latest' && '1' || '' }}
+      # Also test saved keys against the OS store: a throw-away keychain on
+      # macOS, Credential Manager on Windows, gnome-keyring on Linux.
+      LEXI_TEST_KEY_STORE: "1"
     strategy:
       fail-fast: false
       matrix:
@@ -89,10 +90,24 @@ jobs:
         run: cargo fmt -p lexi-host -p lexi-cli-rs -- --check
       - name: Clippy (warnings = errors)
         run: cargo clippy -p lexi-host -p lexi-cli-rs --all-targets -- -D warnings
+      - name: Install a keyring (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y gnome-keyring dbus
       - name: Test (mock-server pipeline)
+        if: runner.os != 'Linux'
         run: cargo test -p lexi-host
       - name: Test CLI (binary end-to-end + surface matrix)
+        if: runner.os != 'Linux'
         run: cargo test -p lexi-cli-rs
+      # Linux: a private D-Bus session with gnome-keyring's login keyring
+      # created and unlocked, as a desktop session has.
+      - name: Test host and CLI, with a keyring (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          dbus-run-session -- bash -ec '
+            echo -n lexi-test | gnome-keyring-daemon --daemonize --unlock --components=secrets > /dev/null
+            cargo test -p lexi-host
+            cargo test -p lexi-cli-rs'
 
   # Desktop app (Tauri over lexi-host). macOS only for now: WKWebView is a system
   # framework there, so no extra deps. Linux (webkit2gtk) / Windows (WebView2)

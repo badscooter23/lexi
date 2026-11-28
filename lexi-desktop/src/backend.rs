@@ -643,7 +643,7 @@ fn startup_seen() -> Result<Value, String> {
 
 /// `POST /api/providers/api-key` `{action: show|set|remove, provider,
 /// reveal?, value?}` — a provider's API key: `set` saves it as the saved key
-/// (in the macOS Keychain, else the provider's owner-only key file; listed
+/// (in the OS key store, else the provider's owner-only key file; listed
 /// sources are never written),
 /// `remove` deletes the saved one. Every action answers with the
 /// provider's credentials afterwards (plus `location`/`added`/`used`, or

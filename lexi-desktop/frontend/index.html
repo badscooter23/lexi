@@ -3578,6 +3578,8 @@
     function storePhrase(p) {
       const kind = typeof p.store === 'string' ? p.store : (p.store && p.store.kind);
       if (kind === 'keychain') return 'in the macOS Keychain, encrypted with your login';
+      if (kind === 'credential-manager') return 'in Windows Credential Manager, encrypted with your login';
+      if (kind === 'secret-service') return 'in your desktop keyring, encrypted with your login';
       const place = p.location || p.save_to;
       return place ? `in the file ${place}` : 'in a key file only you can read';
     }

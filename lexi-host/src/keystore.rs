@@ -7,7 +7,7 @@
 //! failing command never silently switches you to a different key.
 //!
 //! The listed sources are never written: a key Lexi saves goes in its own
-//! store (`saved` — the macOS Keychain, else a 0600 file under `$LEXI_HOME`:
+//! store (`saved` — the OS key store, else a 0600 file under `$LEXI_HOME`:
 //! [`crate::key_store`], `docs/key-storage-design.md`), which is looked in
 //! after the listed sources, or where the marker `saved` puts it.
 //!
@@ -39,7 +39,7 @@ pub(crate) enum Source {
     Command(Vec<String>),
     /// The key written into providers-config.yaml itself.
     Literal(String),
-    /// The key Lexi saved — where it's kept (`the macOS Keychain`, or its key
+    /// The key Lexi saved — where it's kept (the OS store's name, or its key
     /// file) — looked in after the listed sources unless the marker `saved`
     /// puts it earlier. Parsed as `Saved("")`; [`with_saved`] fills in the
     /// place, and [`LookupOpts::saved`] says how to read it.
@@ -65,7 +65,7 @@ impl Source {
     }
 
     /// Where it is, for messages: `$OPENAI_API_KEY`, a path, a command line,
-    /// where a saved key is kept (`the macOS Keychain`, or its key file).
+    /// where a saved key is kept (the OS store's name, or its key file).
     pub(crate) fn describe(&self) -> String {
         match self {
             Source::Env(v) => format!("${v}"),
@@ -562,12 +562,17 @@ pub(crate) fn run_process(
     input: Option<Vec<u8>>,
     timeout: Duration,
 ) -> Result<Finished, RunError> {
-    let run = move || run_process_now(cmd, input, timeout);
+    wait_blocking(move || run_process_now(cmd, input, timeout))
+}
+
+/// Run `f`, which blocks: on a multi-threaded runtime, the runtime's other
+/// tasks move to another thread meanwhile.
+pub(crate) fn wait_blocking<T>(f: impl FnOnce() -> T) -> T {
     match tokio::runtime::Handle::try_current() {
         Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(run)
+            tokio::task::block_in_place(f)
         }
-        _ => run(),
+        _ => f(),
     }
 }
 

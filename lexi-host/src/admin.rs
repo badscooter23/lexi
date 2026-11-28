@@ -79,7 +79,7 @@ pub fn provider_summaries() -> Result<Vec<Value>, HostError> {
 }
 
 /// Add a provider (`providers add`): checks the API definition exists, writes
-/// the entry, saves `api_key` as its saved key (the macOS Keychain, else an
+/// the entry, saves `api_key` as its saved key (the OS key store, else an
 /// owner-only key file — never the config), and makes `default_model` its
 /// default.
 pub fn create_provider(
@@ -127,8 +127,9 @@ fn mask(key: &str) -> String {
 ///   command is `not run`, and is `source` when it would be used.
 /// - `save_to`: where `providers api-key set` saves the key (`the macOS
 ///   Keychain`, or its key file); `store`: `{kind, available, locked}` —
-///   where saved keys are kept (`kind` `keychain` or `file`), and whether
-///   reading the saved key failed because the keychain is locked.
+///   where saved keys are kept (`kind` `keychain`, `credential-manager`,
+///   `secret-service` or `file`), and whether reading the saved key failed
+///   because the store is locked.
 /// - `env`: the first environment variable the list reads, if any.
 pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value, HostError> {
     provider_config(name)?;
