@@ -1,6 +1,6 @@
 # API Key Storage — Design
 
-**Status:** accepted · 2026-11-25 · steps 1 (source model) and 2 (macOS store) implemented
+**Status:** accepted · 2026-11-25 · steps 1 (source model), 2 (macOS store) and 3 (Windows and Linux stores) implemented
 **Scope:** where Lexi reads API keys from and where it saves them: the CLI, the
 Python library and the desktop app (all via `lexi-host`).
 **Replaces:** the 0.3.0 rule that a saved key goes into "the first file
@@ -139,7 +139,16 @@ caller is the app, the CLI or a Python process.
 - In the `security -i` line, arguments are double-quoted with `\` and `"`
   escaped (the tool's own parser); `security` exits with the low byte of the
   OSStatus (44 not found, 36 interaction not allowed = locked).
-- Windows targets and Secret Service attributes carry the same fields.
+- Windows targets and Secret Service attributes carry the same fields: the
+  credential's target is `Lexi:<account>` (its comment the label); the
+  Secret Service item has `service: Lexi`, `username: <account>` and the
+  label. Both go through the `keyring` 3 crate (Linux: its pure-Rust zbus
+  client), each call on its own thread with a 60-second limit, so an unlock
+  dialog nobody answers can't hang Lexi.
+- **Reachable** means looking up an item that isn't there finds nothing
+  rather than failing (checked once per process). WSL has a Secret Service
+  but often no default collection: lookups work and saving fails, with the
+  error; `key_store: file` avoids it.
 
 **Choosing a backend.** Set `key_store` in `config.json` to `auto` (the
 default), `system` or `file`. `LEXI_KEY_STORE` overrides it (tests, CI).
@@ -251,11 +260,13 @@ then `set` on the old version restores them.
   create-keychain` in a temp dir), passed to each `security` call by path
   (`LEXI_KEYCHAIN` for the CLI). Creating a keychain adds it to the search
   list, so the tests put the list back straight away, and they run only when
-  `LEXI_TEST_KEYCHAIN` is set (CI on macOS), never on a developer's Mac by
-  default.
-- **Windows backend tests** use a unique target prefix and clean up.
+  `LEXI_TEST_KEY_STORE` is set (CI, on every platform), never on a
+  developer's machine by default.
+- **Windows backend tests** use accounts made unique by the test's temp
+  home, and delete them.
 - **Linux backend tests** run against a private `gnome-keyring-daemon` on a
-  session bus in CI.
+  session bus in CI (`dbus-run-session`, the login keyring unlocked with a
+  test password).
 - **`command:`** is covered for success, empty output, non-zero exit (stderr
   shown), timeout, caching, and refusal when the config is writable by others.
 - **Migration** has a case for each step in §6, including a locked or

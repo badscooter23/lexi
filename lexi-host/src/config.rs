@@ -326,7 +326,8 @@ pub fn api_key_source(
 /// Where a saved key went (`set_api_key`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SavedKey {
-    /// Where it's kept: `the macOS Keychain`, or its key file (under
+    /// Where it's kept: the OS store's name (`the macOS Keychain`, `Windows
+    /// Credential Manager`, `your desktop keyring`), or its key file (under
     /// `$LEXI_HOME`).
     pub location: String,
     /// The kind of store: `keychain` or `file`.
@@ -511,7 +512,7 @@ pub(crate) fn key_plan(
 }
 
 /// Save an API key for `provider` — or, with `api`, a key for that API only —
-/// as its saved key: in the macOS Keychain, else an owner-only file,
+/// as its saved key: in the OS key store, else an owner-only file,
 /// `providers/<name>/api-key` (`api-key-<api>` for an API) — one copy, in
 /// one place (`key_store` in config.json). The sources `api_key` lists are
 /// never written. providers-config.yaml changes only when an API that used the

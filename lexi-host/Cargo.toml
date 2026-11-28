@@ -18,6 +18,15 @@ base64 = "0.22"
 thiserror = "1"
 dirs = "5"
 
+# The OS key store for saved keys (docs/key-storage-design.md §4.3). macOS
+# uses Apple's `security` tool instead (no crate); Linux talks to the Secret
+# Service over D-Bus in pure Rust (no libdbus).
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { version = "3.6", default-features = false, features = ["async-secret-service", "async-io", "crypto-rust"] }
+
 [dev-dependencies]
 wiremock = "0.6"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

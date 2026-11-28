@@ -33,7 +33,7 @@ def add(
     hosted_models: str = "/models",
 ) -> Dict[str, Any]:
     """Add a provider speaking API definition ``api`` at ``url``. ``api_key``
-    is saved in the macOS Keychain, else the provider's owner-only key file;
+    is saved in the OS key store, else the provider's owner-only key file;
     never the config."""
     return call(
         "providers.add",
@@ -58,12 +58,15 @@ def remove(name: str) -> Dict[str, Any]:
 
 def set_key(name: str, key: str, *, api: Optional[str] = None) -> Dict[str, Any]:
     """Save an API key as the provider's saved key (``api``: a key for that
-    API only) — in the macOS Keychain, else an owner-only file,
+    API only) — in the OS key store (macOS Keychain, Windows Credential
+    Manager, the Linux desktop keyring), else an owner-only file,
     ``providers/<name>/api-key`` (``api-key-<api>``); ``key_store`` in the
     config picks — looked in after the sources ``api_key`` lists, which are
     never written. Returns ``{provider, location, store, added, used}``:
-    ``location`` is where it's kept (``"the macOS Keychain"`` or the file),
-    ``store`` ``"keychain"`` or ``"file"``, ``added`` whether providers-config.yaml changed
+    ``location`` is where it's kept (``"the macOS Keychain"``, ``"Windows
+    Credential Manager"``, ``"your desktop keyring"`` or the file),
+    ``store`` ``"keychain"``, ``"credential-manager"``, ``"secret-service"``
+    or ``"file"``, ``added`` whether providers-config.yaml changed
     (an API got its own ``api_key``, or a key written in it was taken out),
     ``used`` where the key is now read from (another source when an earlier
     one has a key)."""
@@ -77,8 +80,8 @@ def show_key(name: str, *, reveal: bool = False, api: Optional[str] = None) -> D
     each ``{kind, from, state, note?}``; ``source``/``from``/``key`` describe
     the key that's used (masked unless ``reveal``; None when there's none).
     Commands run only with ``reveal``. ``save_to`` is where :func:`set_key`
-    saves the key; ``store`` is ``{kind, available, locked}`` (``kind``
-    ``"keychain"`` or ``"file"``)."""
+    saves the key; ``store`` is ``{kind, available, locked}`` (``kind`` as
+    :func:`set_key`'s ``store``)."""
     return call("providers.show_key", name=name, reveal=reveal, api=api)
 
 
