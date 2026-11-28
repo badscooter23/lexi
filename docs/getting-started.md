@@ -137,6 +137,38 @@ A provider's APIs and configured models can each have their own `api_key`, which
 
 `providers api-key set openai --api image-generations` saves a key for that API (in `providers/openai/api-key-image-generations`) and gives it its own `api_key` for you; `show`, `remove` and `source` take `--api` too. For a model, add `api_key:` to its entry in `providers/<provider>/configured-models.yaml` (a model has no saved key of its own: list where its key is).
 
+### Several accounts at one provider (named keys)
+
+If you have more than one account at a provider (work and personal, one per
+client), give each its own **named key** and choose one per request:
+
+```bash
+lexi providers api-key set openai#work          # saves (and adds) the key "work"
+lexi providers api-key set openai#personal
+lexi providers keys list openai                 # default (the unnamed key), work, personal
+
+lexi respond openai#work "Summarize this contract"   # billed to the work account
+lexi respond openai "Hi" --key personal              # the same, with --key
+lexi providers keys default openai work              # used when a request names none
+```
+
+- `openai#work` works wherever a request names a provider: `respond`,
+  `generate`, `embed`, `upload`, `models hosted`, `providers status`, `jobs
+  status|wait`. Python takes `key="work"` (or `"openai#work"`).
+- `openai#default` is the provider's unnamed key.
+- A named key covers every API of the provider. An API's own `api_key`
+  applies only to the unnamed key.
+- A named key has its own sources and its own saved key, in the key store
+  as `openai#work`, or `providers/openai/keys/work` where there's no store.
+  `providers api-key show|remove|source …` take `openai#work` (or
+  `--name work`) the same way.
+- `providers keys add|rename|rm|default` manage them. In
+  providers-config.yaml they're `keys: {work: {api_key: [...]}}` and
+  `default_key: work`.
+- **A background job or an uploaded file belongs to the account that made
+  it:** check the job, or attach the file, with the same key. Lexi prints the
+  job command with it.
+
 ### Checking API Key Status
 
 View whether a key is configured and where it comes from:

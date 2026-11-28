@@ -27,7 +27,14 @@ pub(crate) async fn run(io: &mut Io<'_>, cmd: ModelsCmd) -> u8 {
             tags,
             cached,
             schema: false,
-        } => hosted(io, &provider, raw, table, &tags, cached).await,
+            key,
+        } => match super::request_key(io, &provider, key.as_deref()) {
+            Ok((p, key, _)) => {
+                let list = hosted(io, &p, raw, table, &tags, cached);
+                lexi_host::config::with_key(key, list).await
+            }
+            Err(code) => code,
+        },
         ModelsCmd::Default {
             provider,
             model,
@@ -77,6 +84,7 @@ pub(crate) async fn run(io: &mut Io<'_>, cmd: ModelsCmd) -> u8 {
 
 /// Fail unless `provider` is in providers-config.yaml.
 fn require_provider(io: &mut Io<'_>, provider: &str) -> Result<Value, u8> {
+    super::plain_provider(io, provider)?;
     let cfg = lexi_host::config::load_providers().map_err(|e| io.fail(e))?;
     cfg.get("providers")
         .and_then(|p| p.get(provider))

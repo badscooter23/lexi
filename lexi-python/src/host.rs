@@ -118,6 +118,24 @@ struct ChatOpts {
     inputs: Vec<String>,
     /// This operation's time limit in seconds (0 = none).
     timeout: Option<u64>,
+    /// One of the provider's named keys (or write `provider#key`).
+    key: Option<String>,
+}
+
+/// `provider#key` and `key=`: the provider and the key its requests use.
+fn split_key(provider: &str, key: Option<&str>) -> PyResult<(String, Option<String>)> {
+    lexi_host::config::split_key_arg(provider, key).map_err(lexi_err)
+}
+
+/// The argument the key admin functions take: `provider#key`, or the
+/// provider alone for its unnamed key.
+fn key_target(provider: &str, key: Option<&str>) -> PyResult<(String, String)> {
+    let (p, k) = split_key(provider, key)?;
+    let target = match k.as_deref() {
+        Some(k) if k != lexi_host::config::DEFAULT_KEY => format!("{p}#{k}"),
+        _ => p.clone(),
+    };
+    Ok((p, target))
 }
 
 /// Run `fut` with `timeout` as its time limit for provider requests, if given.
@@ -152,9 +170,16 @@ fn parse_opts(opts: &Bound<'_, PyAny>) -> PyResult<ChatOpts> {
     serde_json::from_value(from_py(opts)?).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-/// Resolve the prompt and compose the chat (no network I/O).
-fn prepare(provider: &str, opts: &ChatOpts, mode: ChatMode) -> PyResult<PreparedChat> {
+/// Resolve the prompt and compose the chat (no network I/O), with the key
+/// `provider#key` / `key=` names; also returns that key, for the requests
+/// that follow.
+fn prepare(
+    provider: &str,
+    opts: &ChatOpts,
+    mode: ChatMode,
+) -> PyResult<(PreparedChat, Option<String>)> {
     ensure_home()?;
+    let (provider, key) = split_key(provider, opts.key.as_deref())?;
     let mut payload = match (&opts.text, &opts.prompt) {
         (Some(_), Some(_)) => {
             return Err(PyValueError::new_err(
@@ -178,7 +203,11 @@ fn prepare(provider: &str, opts: &ChatOpts, mode: ChatMode) -> PyResult<Prepared
         skip_validation: !opts.validate.unwrap_or(true),
         output: opts.output.clone(),
     };
-    lexi_host::prepare_chat(provider, &req, mode).map_err(lexi_err)
+    let chat = lexi_host::config::with_key_sync(key.clone(), || {
+        lexi_host::prepare_chat(&provider, &req, mode)
+    })
+    .map_err(lexi_err)?;
+    Ok((chat, key))
 }
 
 fn mode_from(name: &str) -> PyResult<ChatMode> {
@@ -201,7 +230,7 @@ fn _prepare<'py>(
     opts: &Bound<'py, PyAny>,
     mode: &str,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let chat = prepare(provider, &parse_opts(opts)?, mode_from(mode)?)?;
+    let (chat, _) = prepare(provider, &parse_opts(opts)?, mode_from(mode)?)?;
     to_py(
         py,
         &json!({ "provider": chat.provider, "model": chat.model, "body": chat.body }),
@@ -221,16 +250,19 @@ fn _respond<'py>(
     } else {
         ChatMode::Buffered
     };
-    let chat = prepare(provider, &opts, mode)?;
+    let (chat, key) = prepare(provider, &opts, mode)?;
     let (cite, raw) = (opts.cite, opts.raw);
     let out_dir = PathBuf::from(opts.out_dir.as_deref().unwrap_or("."));
     let out = block_on(
         py,
-        timed(opts.timeout, async move {
-            let res = lexi_host::run_chat(&chat, |_| {}).await?;
-            let saved = lexi_host::generate::save_artifacts(&chat, &res, &out_dir).await?;
-            Ok(chat.result_value(&res, cite, raw, &saved))
-        }),
+        lexi_host::config::with_key(
+            key,
+            timed(opts.timeout, async move {
+                let res = lexi_host::run_chat(&chat, |_| {}).await?;
+                let saved = lexi_host::generate::save_artifacts(&chat, &res, &out_dir).await?;
+                Ok(chat.result_value(&res, cite, raw, &saved))
+            }),
+        ),
     )?;
     to_py(py, &out)
 }
@@ -241,11 +273,19 @@ fn _submit<'py>(
     provider: &str,
     opts: &Bound<'py, PyAny>,
 ) -> PyResult<Bound<'py, PyAny>> {
-    let chat = prepare(provider, &parse_opts(opts)?, ChatMode::Background)?;
-    let out = block_on(py, async move {
-        let st = lexi_host::submit_chat(&chat).await?;
-        Ok(st.to_value(&chat.provider))
-    })?;
+    let (chat, key) = prepare(provider, &parse_opts(opts)?, ChatMode::Background)?;
+    // A job belongs to its key's account: its provider names the key.
+    let label = match &key {
+        Some(k) => format!("{}#{k}", chat.provider),
+        None => chat.provider.clone(),
+    };
+    let out = block_on(
+        py,
+        lexi_host::config::with_key(key, async move {
+            let st = lexi_host::submit_chat(&chat).await?;
+            Ok(st.to_value(&label))
+        }),
+    )?;
     to_py(py, &out)
 }
 
@@ -343,39 +383,42 @@ impl ChatStream {
 #[pyfunction]
 fn _stream(provider: &str, opts: &Bound<'_, PyAny>) -> PyResult<ChatStream> {
     let opts = parse_opts(opts)?;
-    let chat = prepare(provider, &opts, ChatMode::Stream)?;
+    let (chat, key) = prepare(provider, &opts, ChatMode::Stream)?;
     let (cite, raw) = (opts.cite, opts.raw);
     let out_dir = PathBuf::from(opts.out_dir.as_deref().unwrap_or("."));
     let (tx, rx) = mpsc::channel();
     let timeout = opts.timeout;
-    let task = runtime().spawn(timed(timeout, async move {
-        let res = lexi_host::run_chat(&chat, |ev| {
-            let _ = tx.send(match ev {
-                StreamEvent::Delta(t) => Event::Delta(t.to_string()),
-                StreamEvent::Activity("") => return,
-                StreamEvent::Activity(l) => Event::Activity(l.to_string()),
-            });
-        })
-        .await;
-        let res = match res {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = tx.send(Event::Failed(e.to_string()));
-                return;
-            }
-        };
-        match lexi_host::generate::save_artifacts(&chat, &res, &out_dir).await {
-            Ok(saved) => {
-                for a in &saved {
-                    let _ = tx.send(Event::Artifact(a.to_value()));
+    let task = runtime().spawn(lexi_host::config::with_key(
+        key,
+        timed(timeout, async move {
+            let res = lexi_host::run_chat(&chat, |ev| {
+                let _ = tx.send(match ev {
+                    StreamEvent::Delta(t) => Event::Delta(t.to_string()),
+                    StreamEvent::Activity("") => return,
+                    StreamEvent::Activity(l) => Event::Activity(l.to_string()),
+                });
+            })
+            .await;
+            let res = match res {
+                Ok(r) => r,
+                Err(e) => {
+                    let _ = tx.send(Event::Failed(e.to_string()));
+                    return;
                 }
-                let _ = tx.send(Event::Done(chat.result_value(&res, cite, raw, &saved)));
+            };
+            match lexi_host::generate::save_artifacts(&chat, &res, &out_dir).await {
+                Ok(saved) => {
+                    for a in &saved {
+                        let _ = tx.send(Event::Artifact(a.to_value()));
+                    }
+                    let _ = tx.send(Event::Done(chat.result_value(&res, cite, raw, &saved)));
+                }
+                Err(e) => {
+                    let _ = tx.send(Event::Failed(e.to_string()));
+                }
             }
-            Err(e) => {
-                let _ = tx.send(Event::Failed(e.to_string()));
-            }
-        }
-    }));
+        }),
+    ));
     Ok(ChatStream {
         provider: provider.to_string(),
         rx: Mutex::new(Some(rx)),
@@ -387,36 +430,52 @@ fn _stream(provider: &str, opts: &Bound<'_, PyAny>) -> PyResult<ChatStream> {
 // --- jobs -------------------------------------------------------------------
 
 #[pyfunction]
-fn _job_status<'py>(py: Python<'py>, provider: String, id: String) -> PyResult<Bound<'py, PyAny>> {
+#[pyo3(signature = (provider, id, key=None))]
+fn _job_status<'py>(
+    py: Python<'py>,
+    provider: String,
+    id: String,
+    key: Option<String>,
+) -> PyResult<Bound<'py, PyAny>> {
     ensure_home()?;
-    let out = block_on(py, async move {
-        let st = lexi_host::operation_status(&provider, &id).await?;
-        Ok(st.to_value(&provider))
-    })?;
+    let (name, key) = split_key(&provider, key.as_deref())?;
+    let out = block_on(
+        py,
+        lexi_host::config::with_key(key, async move {
+            let st = lexi_host::operation_status(&name, &id).await?;
+            Ok(st.to_value(&provider))
+        }),
+    )?;
     to_py(py, &out)
 }
 
 #[pyfunction]
+#[pyo3(signature = (provider, id, interval, timeout, key=None))]
 fn _job_wait<'py>(
     py: Python<'py>,
     provider: String,
     id: String,
     interval: f64,
     timeout: f64,
+    key: Option<String>,
 ) -> PyResult<Bound<'py, PyAny>> {
     ensure_home()?;
+    let (name, key) = split_key(&provider, key.as_deref())?;
     if !interval.is_finite() || interval <= 0.0 || !timeout.is_finite() || timeout < 0.0 {
         return Err(PyValueError::new_err(
             "interval must be > 0 and timeout >= 0",
         ));
     }
     let polls = ((timeout / interval).ceil() as usize).max(1);
-    let out = block_on(py, async move {
-        let st =
-            lexi_host::wait_operation(&provider, &id, Duration::from_secs_f64(interval), polls)
-                .await?;
-        Ok(st.to_value(&provider))
-    })?;
+    let out = block_on(
+        py,
+        lexi_host::config::with_key(key, async move {
+            let st =
+                lexi_host::wait_operation(&name, &id, Duration::from_secs_f64(interval), polls)
+                    .await?;
+            Ok(st.to_value(&provider))
+        }),
+    )?;
     to_py(py, &out)
 }
 
@@ -430,6 +489,7 @@ fn _embed<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     ensure_home()?;
     let o = parse_opts(opts)?;
+    let (provider, key) = split_key(&provider, o.key.as_deref())?;
     let req = lexi_host::EmbedRequest {
         inputs: o.inputs.clone(),
         model: o.model.clone(),
@@ -440,21 +500,34 @@ fn _embed<'py>(
     };
     let out = block_on(
         py,
-        timed(
-            o.timeout,
-            async move { lexi_host::embed(&provider, &req).await },
+        lexi_host::config::with_key(
+            key,
+            timed(
+                o.timeout,
+                async move { lexi_host::embed(&provider, &req).await },
+            ),
         ),
     )?;
     to_py(py, &out)
 }
 
 #[pyfunction]
-fn _upload<'py>(py: Python<'py>, provider: String, path: PathBuf) -> PyResult<Bound<'py, PyAny>> {
+#[pyo3(signature = (provider, path, key=None))]
+fn _upload<'py>(
+    py: Python<'py>,
+    provider: String,
+    path: PathBuf,
+    key: Option<String>,
+) -> PyResult<Bound<'py, PyAny>> {
     ensure_home()?;
-    let file_id = block_on(py, {
-        let provider = provider.clone();
-        async move { lexi_host::upload_file(&provider, &path).await }
-    })?;
+    let (name, key) = split_key(&provider, key.as_deref())?;
+    let file_id = block_on(
+        py,
+        lexi_host::config::with_key(
+            key,
+            async move { lexi_host::upload_file(&name, &path).await },
+        ),
+    )?;
     to_py(py, &json!({ "provider": provider, "file_id": file_id }))
 }
 
@@ -508,12 +581,37 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
         "providers.list" => json!(admin::provider_summaries().map_err(e)?),
         "providers.status" => {
             let name = a.string("name")?;
-            block_on(py, async move {
-                let st = lexi_host::check_api_key(&name).await?;
-                Ok(
-                    json!({ "provider": name, "status": st.status, "source": st.source, "from": st.from }),
-                )
-            })?
+            let (provider, key) = split_key(&name, a.opt_str("key"))?;
+            block_on(
+                py,
+                lexi_host::config::with_key(key, async move {
+                    let st = lexi_host::check_api_key(&provider).await?;
+                    Ok(
+                        json!({ "provider": name, "status": st.status, "source": st.source, "from": st.from }),
+                    )
+                }),
+            )?
+        }
+        "providers.keys" => cfg::key_names(a.str("name")?).map_err(e)?,
+        "providers.add_key" => {
+            let (name, key) = (a.str("name")?, a.str("key")?);
+            let added = cfg::add_named_key(name, key).map_err(e)?;
+            json!({ "provider": name, "key_name": key, "added": added })
+        }
+        "providers.rename_key" => {
+            let (name, old, new) = (a.str("name")?, a.str("old")?, a.str("new")?);
+            cfg::rename_named_key(name, old, new).map_err(e)?;
+            json!({ "provider": name, "renamed": old, "to": new })
+        }
+        "providers.delete_key" => {
+            let (name, key) = (a.str("name")?, a.str("key")?);
+            cfg::remove_named_key(name, key).map_err(e)?;
+            json!({ "provider": name, "removed": key })
+        }
+        "providers.set_default_key" => {
+            let name = a.str("name")?;
+            cfg::set_default_key(name, a.opt_str("key")).map_err(e)?;
+            json!({ "provider": name, "default_key": a.opt_str("key").unwrap_or(cfg::DEFAULT_KEY) })
         }
         "providers.add" => {
             let name = a.str("name")?;
@@ -539,29 +637,32 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
             json!({ "removed": name })
         }
         "providers.set_key" => {
-            let name = a.str("name")?;
-            require_provider(name).map_err(e)?;
-            let mut saved = cfg::set_api_key(name, a.opt_str("api"), a.str("key")?)
+            let (name, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
+            require_provider(&name).map_err(e)?;
+            let mut saved = cfg::set_api_key(&target, a.opt_str("api"), a.str("key")?)
                 .map_err(e)?
                 .to_value();
             saved["provider"] = json!(name);
+            saved["key_name"] = json!(target.split_once('#').map(|(_, k)| k));
             saved
         }
         "providers.show_key" => {
-            admin::api_key_info(a.str("name")?, a.opt_str("api"), a.flag("reveal")).map_err(e)?
+            let (_, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
+            admin::api_key_info(&target, a.opt_str("api"), a.flag("reveal")).map_err(e)?
         }
         "providers.key_sources" => {
-            cfg::key_source_list(a.str("name")?, a.opt_str("api")).map_err(e)?
+            let (_, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
+            cfg::key_source_list(&target, a.opt_str("api")).map_err(e)?
         }
         "providers.add_key_source" => {
+            let (_, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
             let source = a.0.get("source").cloned().unwrap_or(Value::Null);
-            cfg::add_key_source(a.str("name")?, a.opt_str("api"), &source, a.flag("first"))
-                .map_err(e)?
+            cfg::add_key_source(&target, a.opt_str("api"), &source, a.flag("first")).map_err(e)?
         }
         "providers.remove_key_source" => {
-            let name = a.str("name")?;
+            let (name, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
             let source = a.0.get("source").cloned().unwrap_or(Value::Null);
-            let removed = cfg::remove_key_source(name, a.opt_str("api"), &source).map_err(e)?;
+            let removed = cfg::remove_key_source(&target, a.opt_str("api"), &source).map_err(e)?;
             json!({ "provider": name, "removed": removed })
         }
         "providers.upgrade" => {
@@ -591,9 +692,9 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
             json!({ "provider": name, "removed": api })
         }
         "providers.remove_key" => {
-            let name = a.str("name")?;
-            require_provider(name).map_err(e)?;
-            json!({ "removed": cfg::remove_api_key(name, a.opt_str("api")).map_err(e)? })
+            let (name, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
+            require_provider(&name).map_err(e)?;
+            json!({ "removed": cfg::remove_api_key(&target, a.opt_str("api")).map_err(e)? })
         }
 
         // models
@@ -651,9 +752,13 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
                             .collect()
                     })
                     .unwrap_or_default();
-            Value::Array(block_on(py, async move {
-                lexi_host::models::hosted_summaries(&p, cached, &tags).await
-            })?)
+            let (p, key) = split_key(&p, a.opt_str("key"))?;
+            Value::Array(block_on(
+                py,
+                lexi_host::config::with_key(key, async move {
+                    lexi_host::models::hosted_summaries(&p, cached, &tags).await
+                }),
+            )?)
         }
         "models.default" => {
             lexi_host::models::defaults(a.str("provider")?, a.opt_str("kind")).map_err(e)?

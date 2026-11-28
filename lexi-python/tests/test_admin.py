@@ -42,11 +42,12 @@ def test_providers_lifecycle(home):
         "save_to": "providers/yours/api-key",
         "store": {"kind": "file", "available": True, "locked": False},
         "env": None,
+        "key_name": None,
     }
     saved = lexi.providers.set_key("yours", "k2")
     assert saved == {
         "provider": "yours", "location": "providers/yours/api-key", "store": "file",
-        "added": False, "used": "providers/yours/api-key",
+        "added": False, "used": "providers/yours/api-key", "key_name": None,
     }
     assert lexi.providers.show_key("yours", reveal=True)["key"] == "k2"
     assert lexi.providers.remove("yours") == {"removed": "yours"}
@@ -323,3 +324,37 @@ def test_hosted_schema_shows_how_the_listing_is_fetched(home):
     assert s["catalog"]["name"] == {"path": "display_name"}
     with pytest.raises(lexi.LexiError):
         lexi.models.hosted_schema("nope")
+
+
+def test_named_keys_pick_the_account(home, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    lexi.providers.list()  # seed
+    assert lexi.providers.add_key("openai", "work") == {
+        "provider": "openai", "key_name": "work", "added": True,
+    }
+    monkeypatch.setenv("LEXI_PY_WORK_KEY", "sk-work")
+    lexi.providers.add_key_source("openai", env="LEXI_PY_WORK_KEY", key_name="work")
+    saved = lexi.providers.set_key("openai", "sk-personal", key_name="personal")
+    assert (saved["key_name"], saved["location"]) == ("personal", "providers/openai/keys/personal")
+    assert lexi.providers.show_key("openai#personal", reveal=True)["key"] == "sk-personal"
+    assert lexi.providers.show_key("openai", key_name="work", reveal=True)["key"] == "sk-work"
+    assert [k["name"] for k in lexi.providers.keys("openai")["keys"]] == ["default", "work", "personal"]
+
+    # A request picks a key with key= or provider#key; an unknown one is an error.
+    assert lexi.prepare("openai", "hi", key="work")["provider"] == "openai"
+    assert lexi.prepare("openai#personal", "hi")["provider"] == "openai"
+    with pytest.raises(lexi.LexiError, match="no API key"):
+        lexi.prepare("openai", "hi")  # the unnamed key has none
+    with pytest.raises(lexi.LexiError, match='no key named "nope"'):
+        lexi.prepare("openai", "hi", key="nope")
+    with pytest.raises(lexi.LexiError, match="name different keys"):
+        lexi.prepare("openai#work", "hi", key="personal")
+
+    lexi.providers.set_default_key("openai", "work")
+    assert lexi.prepare("openai", "hi")["provider"] == "openai"  # now uses work
+    assert lexi.providers.keys("openai")["default_key"] == "work"
+    lexi.providers.rename_key("openai", "work", "acme")
+    assert lexi.providers.keys("openai")["default_key"] == "acme"
+    assert lexi.providers.delete_key("openai", "acme") == {"provider": "openai", "removed": "acme"}
+    lexi.providers.set_default_key("openai", None)
+    assert lexi.providers.keys("openai")["default_key"] == "default"

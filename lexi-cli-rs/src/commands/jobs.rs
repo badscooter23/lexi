@@ -5,9 +5,14 @@ use crate::output::{scalar, Io, EXIT_FAILURE};
 
 pub(crate) async fn run(io: &mut Io<'_>, cmd: JobsCmd) -> u8 {
     match cmd {
-        JobsCmd::Status { provider, id } => {
-            match lexi_host::operation_status(&provider, &id).await {
-                Ok(st) => report(io, &provider, &st),
+        JobsCmd::Status { provider, id, key } => {
+            let (provider, key, label) = match super::request_key(io, &provider, key.as_deref()) {
+                Ok(k) => k,
+                Err(code) => return code,
+            };
+            let check = lexi_host::operation_status(&provider, &id);
+            match lexi_host::config::with_key(key, check).await {
+                Ok(st) => report(io, &label, &st),
                 Err(e) => io.fail(e),
             }
         }
@@ -16,7 +21,12 @@ pub(crate) async fn run(io: &mut Io<'_>, cmd: JobsCmd) -> u8 {
             id,
             interval,
             timeout,
+            key,
         } => {
+            let (provider, key, label) = match super::request_key(io, &provider, key.as_deref()) {
+                Ok(k) => k,
+                Err(code) => return code,
+            };
             let interval = interval.max(1);
             let polls = (timeout / interval).max(1) as usize;
             let wait = lexi_host::wait_operation(
@@ -25,8 +35,8 @@ pub(crate) async fn run(io: &mut Io<'_>, cmd: JobsCmd) -> u8 {
                 std::time::Duration::from_secs(interval),
                 polls,
             );
-            match wait.await {
-                Ok(st) => report(io, &provider, &st),
+            match lexi_host::config::with_key(key, wait).await {
+                Ok(st) => report(io, &label, &st),
                 Err(e) => io.fail(e),
             }
         }

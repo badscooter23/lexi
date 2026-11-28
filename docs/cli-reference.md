@@ -16,7 +16,7 @@ the global `--json` flag (machine-readable output; see
 
 Send a prompt to a provider; get back text, images, or both.
 
-respond <provider> [TEXT…|-] [--prompt NAME] [--model M] [--output KIND] [--out DIR] [--role R] [--stream] [--background [--detach]] [--image URL|PATH]... [<schema flags>] [--set path=value]... [--unset path]... [--tool preset[,preset]]... [--params FILE] [--cite] [--raw|-r] [--verbose|-v] [--no-validate] [--timeout SECS]
+respond <provider> [TEXT…|-] [--prompt NAME] [--model M] [--output KIND] [--out DIR] [--role R] [--stream] [--background [--detach]] [--image URL|PATH]... [<schema flags>] [--set path=value]... [--unset path]... [--tool preset[,preset]]... [--params FILE] [--cite] [--raw|-r] [--verbose|-v] [--no-validate] [--timeout SECS] [--key KEY]
 
 The words are the prompt (`-` reads stdin); with none, the saved prompt --prompt NAME, else the active one. The model's tags pick the API; --output image picks the provider's image API and default image model. Images are saved to --out (default: here), never overwriting a file.
 
@@ -24,11 +24,13 @@ Schema flags (e.g. --temperature, --size) come from the selected API's definitio
 
 --timeout SECS sets this request's time limit (0 = none) instead of request_timeout in config.json: the whole wait, or with --stream the longest silence.
 
+--key KEY (or PROVIDER#KEY) uses one of the provider's named keys (`providers keys list`): another account's.
+
 ```
 lexi respond <PROVIDER> [ARGS]...
 ```
 
-- `<PROVIDER>` — Provider name, as in providers-config.yaml
+- `<PROVIDER>` — Provider name, as in providers-config.yaml (PROVIDER#KEY for a named key)
 - `<ARGS>` — Prompt name and options (see above)
 
 ## `generate`
@@ -46,6 +48,7 @@ lexi generate [OPTIONS] <PROVIDER> <PROMPT>
 - `--model` — Override the provider's default model
 - `--out` — Directory to write images into
 - `--timeout` — This request's time limit in seconds (0 = none), instead of request_timeout in config.json
+- `--key` — Use this named key of the provider (or write PROVIDER#KEY)
 
 ## `embed`
 
@@ -55,6 +58,7 @@ Embed texts as vectors (one per text) with a provider's embedding model.
 
 embed <provider> TEXT... [--file FILE] [-] [--model M] [<schema flags>]
 [--set path=value]... [--unset path]... [--no-validate] [--timeout SECS]
+[--key KEY]
 
 Each argument is one text; --file adds one text per line, `-` reads
 lines from stdin. Schema flags (e.g. --dimensions, --input-type) come
@@ -75,11 +79,12 @@ lexi embed <PROVIDER> [ARGS]...
 Upload a file to a provider's Files API; prints the file id
 
 ```
-lexi upload <PROVIDER> <FILE>
+lexi upload [OPTIONS] <PROVIDER> <FILE>
 ```
 
 - `<PROVIDER>` — Provider name
 - `<FILE>` — Path to the file to upload
+- `--key` — Upload with this named key of the provider (or write PROVIDER#KEY); a file belongs to that key's account
 
 ## `jobs`
 
@@ -90,11 +95,12 @@ Check or wait for a background job (`respond --background --detach`)
 Check a job once; prints its result if it has finished
 
 ```
-lexi jobs status <PROVIDER> <ID>
+lexi jobs status [OPTIONS] <PROVIDER> <ID>
 ```
 
 - `<PROVIDER>`
 - `<ID>`
+- `--key` — The named key the job was started with (or write PROVIDER#KEY)
 
 #### `jobs wait`
 
@@ -108,6 +114,7 @@ lexi jobs wait [OPTIONS] <PROVIDER> <ID>
 - `<ID>`
 - `--interval` — Seconds between polls
 - `--timeout` — Give up after this many seconds
+- `--key` — The named key the job was started with (or write PROVIDER#KEY)
 
 ## `tags`
 
@@ -338,6 +345,7 @@ lexi providers status [OPTIONS] <NAME>
 
 - `<NAME>`
 - `-r, --raw` — Print {provider, status, source} as JSON
+- `--key` — Check this named key (or write PROVIDER#KEY)
 
 #### `providers add`
 
@@ -365,6 +373,7 @@ lexi providers api-key set [OPTIONS] <NAME>
 - `<NAME>`
 - `-v, --value`
 - `--api` — A key for this API only (one of the provider's APIs); it gets its own api_key
+- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
 
 #### `providers api-key show`
 
@@ -377,6 +386,7 @@ lexi providers api-key show [OPTIONS] <NAME>
 - `<NAME>`
 - `-r, --reveal`
 - `--api` — The key this API uses
+- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
 
 #### `providers api-key remove`
 
@@ -388,6 +398,7 @@ lexi providers api-key remove [OPTIONS] <NAME>
 
 - `<NAME>`
 - `--api` — The API's own key
+- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
 
 #### `providers api-key source list`
 
@@ -401,6 +412,7 @@ lexi providers api-key source list [OPTIONS] <NAME>
 
 - `<NAME>`
 - `--api` — The sources of this API's own key
+- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
 
 #### `providers api-key source add`
 
@@ -417,6 +429,7 @@ lexi providers api-key source add [OPTIONS] <--env <VAR>|--file <PATH>|--command
 - `--saved` — The saved key's place in the list
 - `--first` — Look here before the other sources
 - `--api` — For this API only (it gets its own api_key)
+- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
 
 #### `providers api-key source rm`
 
@@ -434,6 +447,66 @@ lexi providers api-key source rm [OPTIONS] <--env <VAR>|--file <PATH>|--command 
 - `--command` — A program that prints the key, with its arguments, e.g. 'op read op://Private/OpenAI/credential' (run without a shell)
 - `--saved` — The saved key's place in the list
 - `--api` — From this API's own api_key
+- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
+
+#### `providers keys list`
+
+Aliases: `ls`
+
+List the provider's keys — `default` (its unnamed key) and its named keys — with where each comes from and which one requests use
+
+```
+lexi providers keys list <NAME>
+```
+
+- `<NAME>`
+
+#### `providers keys add`
+
+Add a named key (another account's): save it with `providers api-key set PROVIDER#KEY`, or give it sources with `providers api-key source add PROVIDER#KEY …`
+
+```
+lexi providers keys add <NAME> <KEY>
+```
+
+- `<NAME>`
+- `<KEY>`
+
+#### `providers keys rename`
+
+Rename a named key (its saved key goes along)
+
+```
+lexi providers keys rename <NAME> <OLD> <NEW>
+```
+
+- `<NAME>`
+- `<OLD>`
+- `<NEW>`
+
+#### `providers keys rm`
+
+Aliases: `del`, `remove`
+
+Remove a named key and its saved key
+
+```
+lexi providers keys rm <NAME> <KEY>
+```
+
+- `<NAME>`
+- `<KEY>`
+
+#### `providers keys default`
+
+Show the key requests use when they name none, or set it (`default`: the unnamed key)
+
+```
+lexi providers keys default <NAME> [KEY]
+```
+
+- `<NAME>`
+- `<KEY>`
 
 #### `providers api list`
 
@@ -545,6 +618,7 @@ lexi models hosted [OPTIONS] <PROVIDER>
 - `--tag` — Only models with this tag (repeatable: all must match), e.g. out:image
 - `--cached` — Use the last fetched listing instead of calling the provider
 - `--schema` — Show how the listing is fetched instead of fetching it: the models endpoint and the catalog settings (paging, fields, tag and limit rules), and whether they come from the provider's template or providers-config.yaml
+- `--key` — List what this named key's account sees (or write PROVIDER#KEY)
 
 #### `models default`
 
