@@ -108,7 +108,7 @@ fn notices() -> &'static std::sync::Mutex<Vec<String>> {
 }
 
 /// What [`ensure_home`] did that's worth telling you once ("Moved
-/// anthropic's API key into the macOS Keychain."), taken: the next call
+/// anthropic's API key into macOS Keychain."), taken: the next call
 /// returns only newer ones. The CLI prints them, the desktop app shows them
 /// at startup, the Python library issues them as warnings.
 pub fn take_notices() -> Vec<String> {

@@ -674,8 +674,8 @@ pub fn api_key_source(
 /// Where a saved key went (`set_api_key`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SavedKey {
-    /// Where it's kept: the OS store's name (`the macOS Keychain`, `Windows
-    /// Credential Manager`, `your desktop keyring`), or its key file (under
+    /// Where it's kept: the OS store's name (`macOS Keychain`, `Windows
+    /// Credential Manager`, `desktop keyring`), or its key file (under
     /// `$LEXI_HOME`).
     pub location: String,
     /// The kind of store: `keychain` or `file`.

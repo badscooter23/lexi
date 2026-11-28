@@ -358,14 +358,14 @@ lexi providers add [OPTIONS] --url <URL> --default_model <DEFAULT_MODEL> <NAME>
 - `<NAME>`
 - `--url` — Base URL, e.g. https://api.example.com/v1
 - `--default_model` — The model used when none is given
-- `--api_key` — API key (saved in the OS key store — macOS Keychain, Windows Credential Manager, the desktop keyring — else an owner-only key file; never the config), as the key --key-name names
+- `--api_key` — API key (saved in the OS key store — macOS Keychain, Windows Credential Manager, desktop keyring — else an owner-only key file; never the config), as the key --key-name names
 - `--key_name` — The name of the key --api-key saves (keys have names: PROVIDER#NAME)
 - `--api` — API definition the provider speaks
 - `--hosted_models` — Path of the provider's models endpoint
 
 #### `providers api-key set`
 
-Save a key's value as its saved key (in the OS key store — macOS Keychain, Windows Credential Manager, the Linux desktop keyring — else an owner-only file; key_store in config picks), looked in after the sources its api_key lists. Name the key: PROVIDER#KEY (a new name adds the key), PROVIDER# for one saved before keys had names. Prompted for, or read from stdin, without --value
+Save a key's value as its saved key (in the OS key store — macOS Keychain, Windows Credential Manager, Linux desktop keyring — else an owner-only file; key_store in config picks), looked in after the sources its api_key lists. Name the key: PROVIDER#KEY (a new name adds the key), PROVIDER# for one saved before keys had names. Prompted for, or read from stdin, without --value
 
 ```
 lexi providers api-key set [OPTIONS] <NAME>

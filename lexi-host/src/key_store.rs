@@ -184,7 +184,7 @@ pub(crate) fn is_locked_error(err: &str) -> bool {
 /// (the tool's own line parser). A line break can't be written.
 fn quote(arg: &str) -> Result<String, String> {
     if arg.contains(['\n', '\r']) {
-        return Err(format!("{arg:?} can't be passed to the macOS Keychain"));
+        return Err(format!("{arg:?} can't be passed to macOS Keychain"));
     }
     Ok(format!(
         "\"{}\"",
@@ -299,12 +299,12 @@ impl Store {
         }
     }
 
-    /// The OS store, for messages: `the macOS Keychain`, `Windows
-    /// Credential Manager`, `your desktop keyring` (none for the file).
+    /// The OS store, for messages: `macOS Keychain`, `Windows
+    /// Credential Manager`, `desktop keyring` (none for the file).
     fn name(&self) -> Option<&'static str> {
         match self.backend {
             Backend::File => None,
-            Backend::Keychain(_) => Some("the macOS Keychain"),
+            Backend::Keychain(_) => Some("macOS Keychain"),
             #[cfg(any(windows, target_os = "linux"))]
             Backend::Os => Some(os::NAME),
         }
@@ -420,7 +420,7 @@ impl Store {
         }
     }
 
-    /// "couldn't save openai's API key in the macOS Keychain: it's locked …".
+    /// "couldn't save openai's API key in macOS Keychain: it's locked …".
     fn store_error(&self, verb: &str, slot: &Slot, err: &str) -> HostError {
         HostError::Config(format!(
             "couldn't {verb} {} in {}: {err}",
@@ -461,7 +461,7 @@ impl Store {
 
     fn security(&self, args: &[&str], input: Option<String>) -> Result<Finished, String> {
         if !cfg!(target_os = "macos") {
-            return Err("the macOS Keychain is only on macOS".into());
+            return Err("macOS Keychain is only on macOS".into());
         }
         let mut cmd = std::process::Command::new(SECURITY);
         cmd.args(args);
@@ -622,7 +622,7 @@ mod os {
     #[cfg(target_os = "linux")]
     pub(super) const KIND: &str = "secret-service";
     #[cfg(target_os = "linux")]
-    pub(super) const NAME: &str = "your desktop keyring";
+    pub(super) const NAME: &str = "desktop keyring";
     #[cfg(target_os = "linux")]
     pub(super) const LOCKED: &str = "it's locked: unlock your keyring (log in to the desktop, or run `gnome-keyring-daemon --unlock`), put the key in an environment variable, or keep saved keys in a file with `lexi config set key_store file`";
 
@@ -859,7 +859,7 @@ mod tests {
         security(&["unlock-keychain", "-p", "pw", k]);
 
         let store = Store::keychain_at(&home, &keychain);
-        assert_eq!(store.location(&Slot::new("p", None)), "the macOS Keychain");
+        assert_eq!(store.location(&Slot::new("p", None)), "macOS Keychain");
         // (A locked keychain isn't tested: with a desktop session, as a CI
         // runner has, `security` waits on an unlock dialog instead of failing.)
         exercise(&store, &home);
