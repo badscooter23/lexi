@@ -839,7 +839,13 @@ mod tests {
     /// (whose home is `home`).
     #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
     fn exercise(store: &Store, home: &Path) {
-        let slot = Slot::new("my \"odd\" provider", Some("image-generations"));
+        // Quotes and spaces in the name (Windows file names can't hold `"`).
+        let name = if cfg!(windows) {
+            "my 'odd' provider"
+        } else {
+            "my \"odd\" provider"
+        };
+        let slot = Slot::new(name, Some("image-generations"));
         assert_eq!(store.read(&slot), Ok(None));
 
         // A key file from before is read, then moved in.
