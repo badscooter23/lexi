@@ -790,6 +790,9 @@ fn startup_seen() -> Result<Value, String> {
 /// Every action answers with the credentials afterwards (plus
 /// `location`/`added`/`used`, `removed`, or `listed`).
 fn provider_api_key(body: Value) -> Result<Value, String> {
+    if body.get("variable").and_then(Value::as_bool) == Some(true) {
+        return provider_variable_key(&body);
+    }
     let (provider, key) = provider_and_key(&body)?;
     lexi_host::admin::provider_config(&provider).map_err(|e| e.to_string())?;
     let target = key_target(&provider, key.as_deref());
@@ -837,6 +840,49 @@ fn provider_api_key(body: Value) -> Result<Value, String> {
         c.extend(r.clone());
     }
     Ok(creds)
+}
+
+/// `POST /api/providers/api-key` `{action: show, provider, variable: true,
+/// reveal?}` — the provider's variable (`$OPENAI_API_KEY`), which isn't one
+/// of its keys: `{provider, variable, set, key}` (masked unless `reveal`;
+/// null when it isn't set).
+fn provider_variable_key(body: &Value) -> Result<Value, String> {
+    let provider = require_field(body, "provider")?;
+    let keys = config::key_names(&provider).map_err(|e| e.to_string())?;
+    let var = keys["variable"]["name"]
+        .as_str()
+        .ok_or_else(|| format!("{provider} has no variable: its template doesn't name one"))?
+        .to_string();
+    let value = std::env::var(&var).ok().filter(|v| !v.trim().is_empty());
+    let reveal = body.get("reveal").and_then(Value::as_bool) == Some(true);
+    let key = value.map(|v| {
+        let v = v.trim().to_string();
+        if reveal {
+            v
+        } else {
+            mask_key(&v)
+        }
+    });
+    Ok(json!({
+        "provider": provider,
+        "variable": var,
+        "set": key.is_some(),
+        "key": key,
+        "check": keys["variable"]["check"],
+    }))
+}
+
+/// `sk-a****wxyz`: the first and last four characters (all masked when
+/// it's short), as the key list shows keys.
+fn mask_key(key: &str) -> String {
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() > 8 {
+        let head: String = chars[..4].iter().collect();
+        let tail: String = chars[chars.len() - 4..].iter().collect();
+        format!("{head}{}{tail}", "*".repeat(chars.len() - 8))
+    } else {
+        "*".repeat(chars.len())
+    }
 }
 
 /// A source from the key panel: as `api_key` writes it, except that a
@@ -893,10 +939,22 @@ fn saved_value(saved: &config::SavedKey) -> Value {
     })
 }
 
-/// `POST /api/providers/check` `{provider, key?}` — test the provider's key
+/// `POST /api/providers/check` `{provider, key?, variable?}` — test the provider's key
 /// (or its named key's: `key`, or `provider` as `openai#work`) against its
 /// models endpoint (a listing; nothing is generated or billed).
 async fn provider_check(body: Value) -> Result<Value, String> {
+    // `variable: true`: test the provider's variable (`$OPENAI_API_KEY`).
+    if body.get("variable").and_then(Value::as_bool) == Some(true) {
+        let provider = require_field(&body, "provider")?;
+        let check = lexi_host::check_api_key(&provider);
+        let st = config::with_key(Some(config::VARIABLE_KEY.to_string()), check)
+            .await
+            .map_err(|e| e.to_string())?;
+        let label = st.key.clone().unwrap_or_default();
+        let mut out = st.to_value(&label);
+        out["provider"] = json!(provider);
+        return Ok(out);
+    }
     let (provider, key) = provider_and_key(&body)?;
     let label = key_target(&provider, key.as_deref());
     let st = config::with_key(key, lexi_host::check_api_key(&provider))
@@ -1788,9 +1846,11 @@ pub(crate) mod tests {
         }
         // Icon buttons on key rows: `keyIconBtn(act, key, 'CMD', …)`.
         for part in html.split("keyIconBtn('").skip(1) {
-            if let Some(name) = part.split(", '").nth(1) {
-                if let Some(end) = name.find('\'') {
-                    used.insert(name[..end].to_string());
+            // The third argument: keyIconBtn('act', key, 'CMD', …).
+            if let Some(arg) = part.split(", ").nth(2) {
+                let name = arg.trim_matches('\'');
+                if !name.is_empty() && !name.contains(' ') {
+                    used.insert(name.to_string());
                 }
             }
         }
@@ -2061,6 +2121,73 @@ pub(crate) mod tests {
         )
         .await
         .is_err());
+    }
+
+    /// The provider's variable in the key list: shown masked or revealed,
+    /// tested (and the test remembered), without being one of the keys.
+    #[tokio::test]
+    async fn the_providers_variable_is_shown_and_tested() {
+        let _env = ENV_LOCK.lock().await;
+        use serde_json::json;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/models"))
+            .and(header("authorization", "Bearer sk-env-1234567890"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [] })))
+            .mount(&server)
+            .await;
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("LEXI_HOME", home.path());
+        std::env::set_var("LEXI_KEY_STORE", "file");
+        std::env::set_var("OPENAI_API_KEY", "sk-env-1234567890");
+        std::fs::create_dir_all(home.path().join("providers")).unwrap();
+        std::fs::write(
+            home.path().join("providers/providers-config.yaml"),
+            format!(
+                "providers:\n  openai:\n    template: openai\n    url: {}\n",
+                server.uri()
+            ),
+        )
+        .unwrap();
+        let call =
+            |path: &'static str, body: serde_json::Value| super::handle("POST", path, Some(body));
+        let shown = call(
+            "/api/providers/api-key",
+            json!({ "action": "show", "provider": "openai", "variable": true }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(shown["variable"], "OPENAI_API_KEY");
+        assert_eq!(shown["key"], "sk-e*********7890");
+        let revealed = call(
+            "/api/providers/api-key",
+            json!({ "action": "show", "provider": "openai", "variable": true, "reveal": true }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(revealed["key"], "sk-env-1234567890");
+        let check = call(
+            "/api/providers/check",
+            json!({ "provider": "openai", "variable": true }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (check["key"].as_str(), check["verified"].as_bool()),
+            (Some("$OPENAI_API_KEY"), Some(true))
+        );
+        let keys = call(
+            "/api/providers/keys",
+            json!({ "action": "list", "provider": "openai" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(keys["variable"]["check"]["status"], "ok");
+        assert_eq!(keys["keys"].as_array().unwrap().len(), 0);
+        std::env::remove_var("OPENAI_API_KEY");
     }
 
     /// Keys in the app (`docs/key-storage-design.md` §12): the key panel adds,

@@ -811,6 +811,8 @@
     .key-state.ok { color: var(--success); }
     .key-state.bad { color: var(--danger); }
     .key-state.warn { color: var(--warning, #f59e0b); }
+    .key-used-badge { font-size: 0.82rem; font-weight: 600; color: var(--success); padding: 0 6px; }
+    .key-table tr.key-variable-row td { background: var(--input-bg); }
     .key-default-badge { font-size: 0.82rem; font-weight: 600; color: var(--accent-2); padding: 0 6px; }
     .btn.btn-sm { padding: 4px 10px; font-size: 0.82rem; }
     .icon-btn {
@@ -3856,9 +3858,20 @@
     }
 
     // Each key's value, redacted (commands aren't run).
+    // The variable's value (`$` in keyValues): masked unless `reveal`.
+    function variableCall(reveal = false) {
+      return api('/api/providers/api-key', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'show', provider: apiKeyProviderEl.value, variable: true, reveal }),
+      });
+    }
     async function loadKeyValues(provider) {
       const keys = ((apiKeyList && apiKeyList.keys) || []).filter((k) => k.source && k.source !== 'command');
-      const got = await Promise.all(keys.map((k) => keyCall('show', {}, k.name).then((d) => [k.name, d.key]).catch(() => [k.name, null])));
+      const jobs = keys.map((k) => keyCall('show', {}, k.name).then((d) => [k.name, d.key]).catch(() => [k.name, null]));
+      if (apiKeyList && apiKeyList.variable && apiKeyList.variable.set) {
+        jobs.push(variableCall().then((d) => ['$', d.key]).catch(() => ['$', null]));
+      }
+      const got = await Promise.all(jobs);
       if (apiKeyProviderEl.value !== provider) return;
       keyValues = {};
       got.forEach(([name, key]) => { keyValues[name] = { key, revealed: false }; });
@@ -3869,10 +3882,11 @@
     async function copyKeyValue(name) {
       const provider = apiKeyProviderEl.value;
       try {
-        const d = await keyCall('show', { reveal: true }, name);
-        if (!d.key) { setStatus(`${keyTarget(provider, name)} has no key to copy.`, 'warn'); return; }
+        const d = name === '$' ? await variableCall(true) : await keyCall('show', { reveal: true }, name);
+        const what = name === '$' ? `$${d.variable}` : `${keyTarget(provider, name)}'s API key`;
+        if (!d.key) { setStatus(`${name === '$' ? what : keyTarget(provider, name)} has no key to copy.`, 'warn'); return; }
         await navigator.clipboard.writeText(d.key);
-        setStatus(`Copied ${keyTarget(provider, name)}'s API key to the clipboard.`, 'success');
+        setStatus(`Copied ${what} to the clipboard.`, 'success');
       } catch (err) {
         setStatus(`Couldn't copy the key: ${err.message}`, 'error');
       }
@@ -3882,7 +3896,7 @@
       const provider = apiKeyProviderEl.value;
       const revealed = !(keyValues[name] && keyValues[name].revealed);
       try {
-        const d = await keyCall('show', { reveal: revealed }, name);
+        const d = name === '$' ? await variableCall(revealed) : await keyCall('show', { reveal: revealed }, name);
         keyValues[name] = { key: d.key, revealed: revealed && d.key != null };
         renderKeyList(provider);
       } catch (err) {
@@ -3911,11 +3925,29 @@
       return '<span class="key-state found" data-tip="Lexi can read it; it hasn\'t been tested yet (test it with the pulse icon)">Found</span>';
     }
 
+    // The provider's variable as the list's first row, when it's set: it
+    // isn't one of the provider's keys (Lexi doesn't own it: no default, edit
+    // or delete), but a request that names no key uses it, ahead of the ★
+    // default. `$` stands for it in `keyValues` and the row buttons.
+    function variableRowHtml(provider, v) {
+      const k = { name: '$', label: `$${v.name}`, source: 'env', check: v.check };
+      return `<tr class="key-variable-row">
+          <td class="key-name"><code>$${esc(v.name)}</code></td>
+          <td class="key-value-cell">${valueCell(k)}</td>
+          <td class="key-from">your environment</td>
+          <td>${keyStateHtml(provider, k)}</td>
+          <td class="key-actions">
+            <span class="key-used-badge" data-tip="Requests that name no key use $${esc(v.name)}, ahead of the ★ default key. It isn't one of Lexi's keys: change or unset it where you set it (your shell profile, a script)">▶ Used</span>
+            ${keyIconBtn('test', '$', 'key-test', 'test', `Test: ask ${provider} whether it accepts $${v.name} (lists its models; nothing is generated or billed)`)}
+          </td></tr>`;
+    }
+
     function renderKeyList(provider) {
       const keys = (apiKeyList && apiKeyList.keys) || [];
-      if (!keys.length) {
-        const v = apiKeyList && apiKeyList.variable;
-        apiKeyListEl.innerHTML = `<div class="key-list-empty">No keys yet: ${esc(provider)} isn't ready${v && v.set ? ` unless a request uses <code>$${esc(v.name)}</code>` : ''}. Add one with <strong>+ Add Key</strong>${v ? `, or set <code>$${esc(v.name)}</code>` : ''}.</div>`;
+      const v = apiKeyList && apiKeyList.variable;
+      const varSet = !!(v && v.set);
+      if (!keys.length && !varSet) {
+        apiKeyListEl.innerHTML = `<div class="key-list-empty">No keys yet: ${esc(provider)} isn't ready. Add one with <strong>+ Add Key</strong>${v ? `, or set <code>$${esc(v.name)}</code>` : ''}.</div>`;
         return;
       }
       const several = keys.length > 1;
@@ -3924,7 +3956,7 @@
         const state = keyStateHtml(provider, k);
         const from = k.error ? '' : esc(k.from || '—');
         const def = k.default
-          ? `<span class="key-default-badge" aria-label="The default key" data-tip="The default: requests that name no key use this one${apiKeyList.variable && apiKeyList.variable.set ? ` (when $${esc(apiKeyList.variable.name)} isn't set)` : ''}">★ Default</span>`
+          ? `<span class="key-default-badge" aria-label="The default key" data-tip="The default: requests that name no key use this one${varSet ? ` when $${esc(v.name)} isn't set` : ''}">★ Default${varSet ? ` <span class="muted">(after $${esc(v.name)})</span>` : ''}</span>`
           : keyIconBtn('default', k.name, 'key-default', 'star', `Make ${provider}${k.label} the default: the key requests use when they name none`);
         return `<tr>
           <td class="key-name"><code>${esc(k.label || `#${k.name}`)}</code>${unnamed ? ' <span class="muted" data-tip="Saved before keys had names. Edit it to give it a name.">(no name)</span>' : ''}</td>
@@ -3932,15 +3964,17 @@
           <td class="key-from">${from}</td>
           <td>${state}</td>
           <td class="key-actions">
-            ${several || !k.default ? def : '<span class="key-default-badge" data-tip="The only key: requests that name no key use it">★ Default</span>'}
+            ${several || !k.default ? def : `<span class="key-default-badge" data-tip="The only key: requests that name no key use it${varSet ? ` when $${esc(v.name)} isn't set` : ''}">★ Default${varSet ? ` <span class="muted">(after $${esc(v.name)})</span>` : ''}</span>`}
             ${keyIconBtn('test', k.name, 'key-test', 'test', `Test: ask ${provider} whether it accepts this key (lists its models; nothing is generated or billed)`, k.source ? '' : 'disabled')}
             ${keyIconBtn('edit', k.name, 'key-edit', 'edit', `Edit: change this key's value, ${unnamed ? 'give it a name' : 'its name'}, or where Lexi looks for it`)}
             ${keyIconBtn('delete', k.name, 'key-delete', 'trash', 'Delete this key and its saved value')}
           </td></tr>`;
       }).join('');
-      const note = several && !keys.some((k) => k.default)
+      const note = several && !varSet && !keys.some((k) => k.default)
         ? '<div class="warn-text" style="margin-top:6px;">No default: a request has to name a key until you make one the default.</div>' : '';
-      apiKeyListEl.innerHTML = `<table class="key-table"><thead><tr><th>Key</th><th>Value</th><th>Comes from</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>${note}`;
+      const varRow = varSet ? variableRowHtml(provider, v) : '';
+      const none = !keys.length ? '<div class="muted" style="margin-top:6px;">No keys of its own yet: add one with <strong>+ Add Key</strong> to have one saved.</div>' : '';
+      apiKeyListEl.innerHTML = `<table class="key-table"><thead><tr><th>Key</th><th>Value</th><th>Comes from</th><th>Status</th><th></th></tr></thead><tbody>${varRow}${rows}</tbody></table>${note}${none}`;
     }
 
     async function fetchApiKeyStatus(provider) {
@@ -3999,7 +4033,7 @@
     async function testKey(name) {
       const provider = apiKeyProviderEl.value;
       if (!provider) return;
-      setStatus(`Testing the API key for ${keyWords(provider, name)}…`, 'busy');
+      setStatus(`Testing ${name === '$' ? `$${(apiKeyList.variable || {}).name}` : `the API key for ${keyWords(provider, name)}`}…`, 'busy');
       try {
         const r = await testProviderKey(provider, name);
         setStatus(r.text, r.tone);
@@ -4271,10 +4305,12 @@
     // Ask the provider whether it accepts the key (with `key`, that named
     // key) → {text, tone, ok}.
     async function testProviderKey(provider, key) {
+      // `$`: the provider's variable.
       const r = await api('/api/providers/check', {
         method: 'POST',
-        body: JSON.stringify({ provider, key: key ?? undefined }),
+        body: JSON.stringify(key === '$' ? { provider, variable: true } : { provider, key: key ?? undefined }),
       });
+      if (key === '$') key = undefined;
       // `key` "" is the key saved before keys had names (`openai#`).
       const name = key === null || key === undefined ? providerDisplay(provider) : `${providerDisplay(provider)} (#${key})`;
       if (r.status === 'no api-key') return { ok: false, tone: 'error', text: `${name} has no API key${r.reason ? `: ${r.reason}` : ''}.` };
@@ -5051,10 +5087,12 @@
         };
       },
       'key-show': (el) => {
+        if (el && el.dataset.key === '$') return variableCmds('show');
         const t = panelTarget(el);
         return { cli: [cliLine('providers api-key show', panelArg(t), '--reveal')], py: [pyCall('providers.show_key', [t], { reveal: true })] };
       },
       'key-test': (el) => {
+        if (el && el.dataset.key === '$') return variableCmds('test');
         const t = panelTarget(el);
         return { cli: [cliLine('providers status', panelArg(t))], py: [pyCall('providers.status', [t])] };
       },
@@ -5063,6 +5101,7 @@
         return { cli: [cliLine('providers api-key remove', panelArg(t))], py: [pyCall('providers.remove_key', [t])] };
       },
       'key-copy': (el) => {
+        if (el && el.dataset.key === '$') return variableCmds('copy');
         const t = panelTarget(el);
         return {
           cli: [cliLine('providers api-key show', panelArg(t), '--reveal --json') + " | python3 -c 'import json,sys; print(json.load(sys.stdin)[\"key\"], end=\"\")' | pbcopy"],
@@ -5198,6 +5237,21 @@
         py: Object.entries(CONFIG_DEFAULTS).map(([k, v]) => pyCall('config.set', [k, v])),
       }),
     };
+
+    // The >_ help for the variable's row (`$` buttons).
+    function variableCmds(what) {
+      const p = apiKeyProviderEl.value || 'PROVIDER';
+      const v = (apiKeyList && apiKeyList.variable && apiKeyList.variable.name) || 'VAR';
+      if (what === 'test') {
+        return {
+          cli: [cliLine('providers status', shq(p))],
+          py: [pyCall('providers.status', [p])],
+          note: `With no key named, status checks every key and $${v} (when it's set).`,
+        };
+      }
+      if (what === 'copy') return { cli: [`printf %s "$${v}" | pbcopy`], py: ['import os', `os.environ["${v}"]`], note: 'pbcopy is macOS; on Linux use xclip -selection clipboard, on Windows clip.' };
+      return { cli: [`echo "$${v}"`], py: ['import os', `os.environ["${v}"]`] };
+    }
 
     function loadPromptCmd(name) {
       const n = PH(name, 'NAME');
