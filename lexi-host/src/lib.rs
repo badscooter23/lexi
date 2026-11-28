@@ -44,6 +44,11 @@ pub enum HostError {
     Http(#[from] reqwest::Error),
     #[error("provider returned HTTP {status}: {body}")]
     HttpStatus { status: u16, body: String },
+    /// The provider refused a request because of the key's account: no credit,
+    /// or no quota left (its template's `billing_errors`; the message says
+    /// which key and what to do).
+    #[error("{0}")]
+    Account(String),
     /// Invalid input, e.g. a tag not in the vocabulary (the message says why).
     #[error("{0}")]
     Invalid(String),

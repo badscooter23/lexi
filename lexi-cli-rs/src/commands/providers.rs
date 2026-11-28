@@ -274,8 +274,9 @@ fn variable_line(v: &Value) -> Option<String> {
     })
 }
 
-/// A key's status for listings: `found`, `tested ✓ (5 minutes ago)`,
-/// `rejected (…)`, `failed (…)` (its last test), or nothing without a key.
+/// A key's status for listings: `found`, `key accepted (5 minutes ago)`,
+/// `rejected (…)`, `test failed (…)` (its last test), `no credit (…)` (a
+/// request found its account can't pay), or nothing without a key.
 fn key_state(k: &Value) -> String {
     if !k["error"].is_null() || k["source"].is_null() {
         return String::new();
@@ -296,7 +297,8 @@ fn key_state(k: &Value) -> String {
         format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
     };
     match k["check"]["status"].as_str() {
-        Some("ok") => format!("tested ✓ ({})", ago(&k["check"])),
+        Some("ok") => format!("key accepted ({})", ago(&k["check"])),
+        Some("no_credit") => format!("no credit ({})", ago(&k["check"])),
         Some("rejected") => format!("rejected ({})", ago(&k["check"])),
         Some("failed") => format!("test failed ({})", ago(&k["check"])),
         _ => "found".into(),

@@ -4,6 +4,12 @@
 url: https://api.anthropic.com/v1
 api_key: ${ANTHROPIC_API_KEY}
 
+# Errors that mean the key's account can't pay (Lexi says so plainly, and
+# marks the key "No credit"): `match` is part of the error body.
+billing_errors:
+  - match: credit balance is too low
+    message: "the account for this key has no credit left. Add credit in Anthropic's Plans & Billing (https://console.anthropic.com/settings/billing), or use another key"
+
 apis:
   - api: messages
     default_model: claude-sonnet-5-5

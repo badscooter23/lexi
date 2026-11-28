@@ -4,6 +4,12 @@
 url: https://api.openai.com/v1
 api_key: ${OPENAI_API_KEY}
 
+# Errors that mean the key's account can't pay (Lexi says so plainly, and
+# marks the key "No credit"): `match` is part of the error body.
+billing_errors:
+  - match: insufficient_quota
+    message: "the account for this key has run out of quota or credit. Check its plan and billing in OpenAI's settings (https://platform.openai.com/settings/organization/billing), or use another key"
+
 apis:
   - api: responses              # catch-all: chat models
     default_model: gpt-4o

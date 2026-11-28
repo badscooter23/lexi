@@ -60,10 +60,11 @@ pub async fn embed(provider: &str, req: &EmbedRequest) -> Result<Value, HostErro
             .await?;
         let status = resp.status();
         if !status.is_success() {
-            return Err(HostError::HttpStatus {
+            let err = HostError::HttpStatus {
                 status: status.as_u16(),
                 body: resp.text().await.unwrap_or_default(),
-            });
+            };
+            return Err(crate::respond::explain_account_error(provider, eff, err));
         }
         Ok(resp.json().await?)
     })

@@ -122,6 +122,57 @@ fn text_extract(effective_cfg: &Value) -> Option<&Value> {
         .and_then(|r| r.get("text_extract"))
 }
 
+/// A request that failed because the key's account can't pay — no credit,
+/// no quota left — said in plain words, with the key marked `no_credit` in
+/// its last test (so the key list says so). The provider's template says how
+/// to tell (`billing_errors: [{match, status?, message}]`: `match` a
+/// case-insensitive part of the error body, `message` what to do). Any other
+/// error comes back as it is.
+pub(crate) fn explain_account_error(provider: &str, eff: &Value, err: HostError) -> HostError {
+    let HostError::HttpStatus { status, body } = &err else {
+        return err;
+    };
+    let rules = eff.get("billing_errors").and_then(Value::as_array);
+    let lower = body.to_lowercase();
+    let Some(rule) = rules.into_iter().flatten().find(|r| {
+        let m = r.get("match").and_then(Value::as_str).unwrap_or("");
+        let s = r.get("status").and_then(Value::as_u64);
+        !m.is_empty()
+            && lower.contains(&m.to_lowercase())
+            && s.is_none_or(|s| s == u64::from(*status))
+    }) else {
+        return err;
+    };
+    let message = rule
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("the account for this key can't pay for requests");
+    // Which key it was (the same choice the request made), to mark it.
+    let who = match config::lookup_chosen_key(provider, eff, false) {
+        Ok((lookup, label)) => {
+            if let Some(k) = lookup.key.as_deref() {
+                config::record_key_check(provider, &label, "no_credit", k);
+            }
+            if label.starts_with('$') {
+                label
+            } else {
+                format!("{provider}{label}")
+            }
+        }
+        Err(_) => provider.to_string(),
+    };
+    // The provider's own words, when its error is the usual JSON.
+    let said = serde_json::from_str::<Value>(body)
+        .ok()
+        .and_then(|v| {
+            v.pointer("/error/message")
+                .and_then(Value::as_str)
+                .map(String::from)
+        })
+        .unwrap_or_else(|| body.chars().take(200).collect());
+    HostError::Account(format!("{who}: {message}. (The provider said: {said})"))
+}
+
 async fn check_status(resp: reqwest::Response) -> Result<reqwest::Response, HostError> {
     let status = resp.status();
     if status.is_success() {
@@ -535,7 +586,9 @@ pub async fn respond_text(
 ) -> Result<RespondResult, HostError> {
     let (eff, api_key, model) = resolve_provider_model(provider, model_override)?;
     let client = reqwest::Client::new();
-    respond_with_effective(&client, &eff, &api_key, prompt, role, &model, images).await
+    respond_with_effective(&client, &eff, &api_key, prompt, role, &model, images)
+        .await
+        .map_err(|e| explain_account_error(provider, &eff, e))
 }
 
 /// Load config, resolve the provider, and run a streaming chat (optionally with
@@ -554,6 +607,7 @@ pub async fn respond_stream_text<F: FnMut(&str)>(
         &client, &eff, &api_key, prompt, role, &model, images, on_delta,
     )
     .await
+    .map_err(|e| explain_account_error(provider, &eff, e))
 }
 
 /// Load config, resolve the provider, and run a background (submit/poll/fetch)
@@ -849,6 +903,15 @@ pub async fn run_chat<F: FnMut(StreamEvent)>(
     chat: &PreparedChat,
     on_event: F,
 ) -> Result<RespondResult, HostError> {
+    run_chat_unexplained(chat, on_event)
+        .await
+        .map_err(|e| explain_account_error(&chat.provider, &chat.effective, e))
+}
+
+async fn run_chat_unexplained<F: FnMut(StreamEvent)>(
+    chat: &PreparedChat,
+    on_event: F,
+) -> Result<RespondResult, HostError> {
     let client = reqwest::Client::new();
     if chat.streams() {
         post_stream(
@@ -882,7 +945,9 @@ pub async fn run_chat<F: FnMut(StreamEvent)>(
 /// (its `id` is what [`operation_status`] / [`wait_operation`] take).
 pub async fn submit_chat(chat: &PreparedChat) -> Result<OperationStatus, HostError> {
     let client = reqwest::Client::new();
-    submit_background(&client, &chat.effective, &chat.api_key, &chat.body).await
+    submit_background(&client, &chat.effective, &chat.api_key, &chat.body)
+        .await
+        .map_err(|e| explain_account_error(&chat.provider, &chat.effective, e))
 }
 
 fn resolve_provider(provider: &str) -> Result<(Value, String), HostError> {
