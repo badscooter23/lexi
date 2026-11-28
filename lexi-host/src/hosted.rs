@@ -185,6 +185,46 @@ pub(crate) fn cached_entry(provider: &str, cfg: &Value, model: &str) -> Option<V
         .cloned()
 }
 
+/// How [`fetch_hosted_models`] gets `provider`'s listing, without asking it:
+/// `{provider, url, catalog, source, template}`.
+/// - `url`: the models endpoint (the provider's base URL plus the catalog's
+///   `path`, default `/models`), fetched with `GET` and the provider's auth.
+/// - `catalog`: the catalog settings that apply — `path`, `paginate`,
+///   `items_path`, `id_path`, `fields`, `tags`, `limits`, `name`, … (the
+///   older `hosted_models` / `hosted_model_fields` shown as `path` /
+///   `fields`); `{}` when there are none.
+/// - `source`: where they come from — `config` (providers-config.yaml, over
+///   the template's if it has one), `template` (the shipped template named by
+///   `template`) or `default` (none: the listing is read from the response's
+///   `data` or `models` list).
+pub fn hosted_schema(provider: &str) -> Result<Value, HostError> {
+    let providers = config::load_providers()?;
+    let provider_cfg = providers
+        .get("providers")
+        .and_then(|p| p.get(provider))
+        .cloned()
+        .ok_or_else(|| HostError::UnknownProvider(provider.to_string()))?;
+    let eff = config::effective_config(provider, &provider_cfg)?;
+    let raw = Value::Object(config::raw_provider_entry(provider)?);
+    let template = raw.get("template").and_then(Value::as_str);
+    let has_catalog = |v: &Value| catalog_cfg(v).as_object().is_some_and(|c| !c.is_empty());
+    let catalog = catalog_cfg(&eff);
+    let source = if has_catalog(&raw) {
+        "config"
+    } else if template.is_some() && has_catalog(&provider_cfg) {
+        "template"
+    } else {
+        "default"
+    };
+    Ok(serde_json::json!({
+        "provider": provider,
+        "url": hosted_endpoint(&eff),
+        "catalog": catalog,
+        "source": source,
+        "template": template,
+    }))
+}
+
 /// Load config, resolve the provider, and fetch its hosted models.
 pub async fn fetch_hosted_models(provider: &str) -> Result<Vec<Value>, HostError> {
     let providers = config::load_providers()?;

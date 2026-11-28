@@ -42,6 +42,7 @@ not enforced). The wheel's engine functions (`lexi.compose_request_body`, …) w
 | Check an API key | `check_api_key` | `providers status` | `lexi.providers.status` | Providers |
 | List configured models | `load_models`, `model_summaries` | `models list` | `lexi.models.list` | Models |
 | List hosted models (the catalog; classified, filterable by tag, cached) | `fetch_hosted_models`, `fetch_hosted_models_with`, `hosted_summaries`, `cached_catalog` | `models hosted` | `lexi.models.hosted` | Models |
+| Show how hosted models are fetched (endpoint, catalog settings and where they come from) | `hosted_schema` | `models hosted` | `lexi.models.hosted_schema` | — |
 | Get / set / clear the default model for each kind | `defaults`, `default_models`, `set_default`, `clear_default` | `models default` | `lexi.models.default`, `lexi.models.set_default`, `lexi.models.clear_default` | Models (☆/★), Chat and Images (the default pickers) |
 | List model aliases | `model_aliases` | `models alias list` | `lexi.models.aliases` | Models |
 | Set / remove model aliases | `set_model_alias`, `delete_model_alias` | `models alias set`, `models alias rm` | `lexi.models.set_alias`, `lexi.models.remove_alias` | Models |

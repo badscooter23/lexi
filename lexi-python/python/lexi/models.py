@@ -24,6 +24,18 @@ def hosted(
     return call("models.hosted", provider=provider, tags=[*tags], cached=cached)
 
 
+def hosted_schema(provider: str) -> Dict[str, Any]:
+    """How :func:`hosted` gets the provider's listing, without asking it
+    (``lexi models hosted PROVIDER --schema``): ``{provider, url, catalog,
+    source, template}`` — ``url`` the models endpoint (``GET``), ``catalog``
+    the catalog settings that apply (``path``, ``paginate``, ``items_path``,
+    ``id_path``, ``fields``, ``tags``, ``limits``, …; ``{}`` when there are
+    none), ``source`` where they come from: ``"config"``
+    (providers-config.yaml), ``"template"`` (the shipped template named by
+    ``template``) or ``"default"``."""
+    return call("models.hosted_schema", provider=provider)
+
+
 def default(provider: str, kind: Optional[str] = None) -> Dict[str, Any]:
     """The provider's default model for each kind: ``{provider, default_model,
     defaults: [{kind, model, source}]}`` (``default_model`` is the chat

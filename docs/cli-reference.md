@@ -544,6 +544,7 @@ lexi models hosted [OPTIONS] <PROVIDER>
 - `-t, --table` — Render as a table
 - `--tag` — Only models with this tag (repeatable: all must match), e.g. out:image
 - `--cached` — Use the last fetched listing instead of calling the provider
+- `--schema` — Show how the listing is fetched instead of fetching it: the models endpoint and the catalog settings (paging, fields, tag and limit rules), and whether they come from the provider's template or providers-config.yaml
 
 #### `models default`
 

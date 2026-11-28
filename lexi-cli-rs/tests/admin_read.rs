@@ -371,3 +371,55 @@ fn api_list_show_and_validate() {
     let o = lexi_out(home.path(), &["api", "show", "nope"]);
     assert_eq!(o.status.code(), Some(1));
 }
+
+#[test]
+fn models_hosted_schema_shows_how_the_listing_is_fetched() {
+    let home = seeded_home();
+    let h = home.path();
+    // A shipped provider: its template's catalog.
+    let anthropic = json_out(h, &["models", "hosted", "anthropic", "--schema"]);
+    assert_eq!(anthropic["url"], "https://api.anthropic.com/v1/models");
+    assert_eq!(anthropic["source"], "template");
+    assert_eq!(anthropic["template"], "anthropic");
+    assert_eq!(anthropic["catalog"]["paginate"]["after_param"], "after_id");
+
+    // Your own catalog settings (over a template's), the older
+    // hosted_models form, and none at all.
+    write(
+        h,
+        "providers/providers-config.yaml",
+        "providers:\n  mine:\n    template: openai\n    catalog: {path: /v2/list, items_path: result}\n  old:\n    url: https://old.example/v1\n    api: chat-completions\n    hosted_models: /catalog\n  plain:\n    url: https://plain.example/v1/\n    api: chat-completions\n",
+    );
+    let mine = json_out(h, &["models", "hosted", "mine", "--schema"]);
+    assert_eq!(mine["source"], "config");
+    assert_eq!(mine["url"], "https://api.openai.com/v1/v2/list");
+    assert_eq!(mine["catalog"]["items_path"], "result");
+    // A catalog block replaces nothing it doesn't name: the template's
+    // fields still apply.
+    assert_eq!(mine["catalog"]["fields"][0], "id");
+    let old = json_out(h, &["models", "hosted", "old", "--schema"]);
+    assert_eq!(old["source"], "config");
+    assert_eq!(old["catalog"], json!({ "path": "/catalog" }));
+    assert_eq!(old["url"], "https://old.example/v1/catalog");
+    let plain = json_out(h, &["models", "hosted", "plain", "--schema"]);
+    assert_eq!(plain["source"], "default");
+    assert_eq!(plain["catalog"], json!({}));
+    assert_eq!(plain["url"], "https://plain.example/v1/models");
+
+    let text = stdout(&lexi_out(h, &["models", "hosted", "mine", "--schema"]));
+    assert!(text.starts_with(
+        "mine's hosted models: GET https://api.openai.com/v1/v2/list\nCatalog settings, from providers-config.yaml (over the openai template):\n"
+    ), "{text}");
+    assert!(text.contains("\n  items_path: result\n"), "{text}");
+    assert!(
+        stdout(&lexi_out(h, &["models", "hosted", "plain", "--schema"]))
+            .contains("No catalog settings: the models are read from the response's `data`")
+    );
+    // It never fetches, so it can't be combined with what a fetch does.
+    assert_eq!(
+        lexi_out(h, &["models", "hosted", "mine", "--schema", "--cached"])
+            .status
+            .code(),
+        Some(2)
+    );
+}
