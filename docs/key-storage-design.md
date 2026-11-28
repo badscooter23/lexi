@@ -503,7 +503,8 @@ Decided 2026-11-28:
 ## 12. Revision: every key has a name
 
 **Status:** proposed · 2026-11-28 · revises §11 (not yet released, so
-nothing depends on the §11 behaviour)
+nothing depends on the §11 behaviour). The rules in §12.2 were decided
+2026-11-28; §12.9 lists what's still open.
 
 ### 12.1 Why
 
@@ -514,128 +515,139 @@ away: the column labelled "default" wasn't the default key.
 
 The use case is also broader than §11.1 says. Several keys per provider isn't
 only for separate accounts: one account can have a key per **project**, each
-with its own usage and billing reports. So a provider's keys are peers. Each
-has a name, and one of them is the default.
+with its own usage and billing reports. So a provider's keys are peers, and
+they should all behave the same way.
 
-### 12.2 The rule
+### 12.2 The rules
 
-- **Every key has a name, and one key is the default (★).** A request that
-  names no key uses the default. With no `default_key`, the first key is the
-  default.
-- **Only a key saved before names existed is unnamed.** It keeps working
-  unnamed while it's the provider's only key. It must be given a name before
-  a second key is added (§12.5).
-- **`default` is no longer a key name.** `openai#default` goes, and the word
-  "default" means only the ★ key. A key is always picked by its own name,
-  e.g. `openai#personal` or `openai#projectx`.
+1. **Every key has a name.** There's no unnamed key, and `default` is not a
+   key name (`openai#default` goes). The word "default" means only the ★
+   key.
+2. **A provider needs a key to be used,** and the key has to be valid for a
+   request to succeed. A provider with no key, or whose key finds nothing in
+   its sources, is **not ready** until a key is provided.
+3. **One key is the default (★).** A request that names no key uses it.
+   - A provider with exactly one key always has it as the default.
+   - With several keys, `default_key` names the default.
+4. **Any key can be deleted by name, and renamed,** including the default
+   and the only key.
+   - Deleting the only key leaves the provider with no key (not ready).
+   - Deleting the default when other keys remain leaves no default. A
+     request that names no key is refused ("openai has several keys and no
+     default: name one, like `openai#projectx`, or choose a default"), and
+     the provider's status says so. With one key left, that key is the
+     default (rule 3).
+   - Renaming the default keeps it the default.
 
 ### 12.3 Config
+
+All keys live under `keys`. The provider's own `api_key` stops being a key.
 
 ```yaml
 providers:
   openai:
     template: openai
-    key_name: personal                 # the name of the provider's first key
-    api_key: [{env: OPENAI_API_KEY}]   # ...whose sources and saved key are as today
     keys:
-      projectx: {}                     # every other key, as in §11.3
+      main:                                    # the provider's first key
+        api_key: [saved, {env: OPENAI_API_KEY}]
+      projectx: {}                             # its saved key alone
     default_key: projectx
 ```
 
-- **The first key keeps its storage.** Its sources stay in the provider's
-  `api_key`, and its saved key stays in the provider's slot (`openai[@home]`,
-  `providers/openai/api-key`). Naming it only adds `key_name`, so nothing
-  moves, and Lexi 0.3.0 still reads it (§12.7).
-- **The other keys** are under `keys`, exactly as in §11.3 and §11.5.
-- **Names** follow §11.3's rules, and `default` is no longer reserved: a
-  key may be called `default` (no reason to, but no special meaning either).
-- **An API binding's own `api_key`** (§4.6, §11.10 #2) still overrides only
-  the first key.
+- **Each key** is `{api_key?}`: its sources in order (§4.1) and its saved key
+  (§4.3, slot `openai#<name>[@home]`, or `providers/openai/keys/<name>` with
+  no store), exactly as §11.3 and §11.5 describe named keys.
+- **A template's `api_key`** (`${OPENAI_API_KEY}`) is no longer a key. It's
+  the sources the provider's **first** key starts with when Lexi creates it.
+  Later keys start with none, so two keys never read the same variable by
+  accident.
+- **New providers are seeded with one key, `main`,** whose sources are the
+  template's variable and its saved key. A fresh install works as today:
+  `export OPENAI_API_KEY=…` or `lexi providers api-key set openai` is enough.
+  `main` is an ordinary key, so it can be renamed or deleted.
+- **An API binding's or configured model's own `api_key`** (§4.6) still
+  overrides the key, but only for a request that uses the **default** key.
+  A request that names a key uses that key for every API. This keeps
+  §11.10 #2: there are no per-API keys under a key.
 
 ### 12.4 Which key a request uses
 
-1. The key the request names (`--key projectx`, `key=`, `openai#projectx`,
-   the desktop column). The first key answers to its `key_name`. An unnamed
-   key can't be named in a request: it's used only as the default.
-2. Otherwise, as in §11.4, with "the unnamed one" read as "the first key".
+1. The key the request names: `--key projectx`, `key=`, `openai#projectx`,
+   or the desktop column. An unknown name is an error that lists the keys.
+2. Otherwise a configured model's own `api_key`, then an API binding's own,
+   then the **default** key (§12.2 rule 3).
+3. No key at all, or several and no default, is the "not ready" error, never
+   a silent fallback to some other key.
 
-### 12.5 Adding, naming, renaming, removing
+### 12.5 Commands
 
-- **A new key must have a name.**
-  - `providers api-key set openai#projectx` (or `--name projectx`) saves it,
-    and creates it if it's new, as in §11.7.
-  - `providers keys add openai projectx` adds it without a key.
-  - The **first** key a provider gets is stored as the first key (above),
-    with `key_name` set.
-- **`providers api-key set openai`** with no name saves the **default** key,
-  whatever it's called. A provider with no key yet has no default, so with no
-  name the command is refused: "name the key: `lexi providers api-key set
-  openai#NAME` (for example `openai#personal`)". See §12.9 Q1.
-- **Naming a legacy unnamed key:** `providers keys name openai personal`
-  (Python `providers.name_key`) sets `key_name`. It only works while the
-  first key is unnamed.
-  - Adding a second key to a provider whose first key is unnamed is refused,
-    with that command in the message.
-  - In the desktop app, **+ Add Key** asks for the current key's name in the
-    same dialog.
-- **Renaming the first key** changes only `key_name`, so nothing moves.
-  Renaming any other key moves its saved key, as in §11.
-- **Removing:** the default key can't be removed. Make another key the
-  default first, so a provider never has a default that's gone.
-  - Removing the first key when others exist deletes its saved key and
-    `key_name`, and sets its `api_key` to `[]`. That way a template's
-    `$OPENAI_API_KEY` doesn't bring it back unnamed. A later key added to
-    the provider then becomes the first key again.
-  - Removing the only key works as `api-key remove` does today.
+- **Name-required everywhere:**
+  - `providers api-key set openai#NAME` (or `--name NAME`) saves a key, and
+    creates it if it's new.
+  - `providers keys add openai NAME` adds it without a value.
+  - `providers keys rename openai OLD NEW` and `providers keys rm openai
+    NAME` work on any key.
+  - `providers keys default openai NAME` chooses the default.
+- **With no name, the commands that act on "the key"** (`api-key
+  set|show|remove|source`, `providers status`) act on the **default** key,
+  and say which one that is. With no key, or no default, they're refused
+  with a message that names the keys and the fix. So `lexi providers
+  api-key set openai` keeps working on a fresh install, where it saves
+  `main`.
+- **Python** matches: `key=` / `key_name=` take a name, `key="default"` goes,
+  and `providers.set_default_key(name, key)` needs a key.
+- **JSON:** `key_names` rows stay `{name, default, source, from}`, with every
+  `name` a string. A provider result gains `ready` / `reason` (`no key`, `no
+  default key`, `no key found`).
 
-### 12.6 Surfaces
+### 12.6 Desktop
 
-- **CLI:**
-  - `openai#default` and `--key default` go;
-  - `providers keys name` is new;
-  - `providers keys list` shows every key by name (an unnamed legacy key
-    shows as `(unnamed)`), ★ on the default;
-  - `providers keys default openai NAME` stays.
-- **Python:** `providers.name_key` is new, and `key="default"` goes.
-  `set_default_key(name, None)` falls back to the first key.
-- **JSON:** `key_names` rows keep `{name, default, source, from}`. `name` is
-  `null` for an unnamed legacy key, and a new `first: true` marks the
-  first key.
-- **Desktop:**
-  - key tabs are the keys' names, with ★ on the default (an unnamed legacy
-    key's tab says "(unnamed)" and offers **Name…**);
-  - Chat and Images show one column per key when there are several, each
-    `openai#NAME`; with one key, just `openai`;
-  - the Setup Wizard asks for a name for a provider's first key.
+- **Key tabs** are the keys' names, with ★ on the default. Every tab has
+  **Rename…** and **Delete Key**, plus **Use by Default** on the others.
+  **+ Add Key** asks for a name and, optionally, the key.
+- **A provider with no key** shows "Not ready: add a key" in the panel, and
+  isn't offered in Chat or Images.
+- **Chat and Images** show one column per key when there are several, each
+  `openai#NAME`, and just `openai` when there's one. No column is called
+  "default".
+- **The Setup Wizard** saves the default key, showing its name. For a
+  provider with no key, it asks for a name, filled in with `main`.
 
 ### 12.7 Migration and compatibility
 
-- **Nothing is renamed automatically.** A 0.3.0 key stays unnamed and works
-  as before until it's named, which is only needed to add a second key.
-- **Lexi 0.3.0** reads the first key's slot only. It ignores `key_name`,
-  `keys` and `default_key`, so it always uses the first key.
-- **§11 configs** (unreleased: development builds only) used `default_key:
-  default` for the unnamed key. Lexi drops that value as "the first key".
+`ensure_home` turns each provider's original key into a key named **`main`**,
+once:
+- its `api_key` list (if any) becomes `keys.main.api_key`;
+- its saved key moves to `main`'s slot (read back first, as in §6);
+- any API's own key is left where it is.
+- Lexi says so once: "openai's key is now named main; rename it with `lexi
+  providers keys rename openai main NEW`."
+- A provider with no original key, and no keys, gets `main` with the
+  template's sources (as when seeded), so `$OPENAI_API_KEY` keeps working.
+- A §11 development-build config whose `keys` already has `main` names the
+  original key `main-2`. Its `default_key: default` becomes that key's name.
+
+**Downgrading to 0.3.0** after this finds no key, because 0.3.0 reads only
+the provider's own slot. As in §6, the release notes say to run `providers
+api-key show --reveal` first. A key that comes only from `$OPENAI_API_KEY`
+works in both.
 
 ### 12.8 Rollout
 
-1. Host, CLI and Python: `key_name`, the request rules, `providers keys
-   name`, the add and remove rules, and the removal of `default`.
-2. Desktop: #85 is reworked to match, with the tab and column names above,
-   **Name…**, and the wizard's name field.
+1. **Host, CLI and Python:** keys-only storage, the seeding and migration to
+   `main`, the default rules, the "not ready" reasons, and removing
+   `default` as a name.
+2. **Desktop:** #85 reworked to match §12.6.
 
 ### 12.9 Open questions
 
-1. **`providers api-key set openai` on a provider with no key:**
-   - (a) refuse and ask for a name, as proposed above;
-   - (b) ask for the name when run in a terminal, and refuse otherwise (a
-     script, a pipe);
-   - (c) name it automatically, e.g. `main`.
-
-   (a) and (b) follow "names are required". (c) keeps today's one-line setup
-   working but creates a name you didn't choose. The README's quick start
-   would change to `openai#personal` with (a).
-2. **The wizard's name field:** empty, or filled in with a suggestion such as
-   `personal` that you can change?
-3. **Removing the first key when others exist** (§12.5): as proposed, or
-   refuse and ask you to remove the others first?
+1. **The automatic name `main`** for the original key, the first key of a new
+   provider, and the one a fresh install seeds: `main`, or another word?
+   (It can always be renamed.)
+2. **The template's variable on the first key only** (§12.3): as proposed,
+   or should every new key start with no sources, including the first (so
+   `$OPENAI_API_KEY` works only once you add it as a source)? Proposed keeps
+   today's zero-config use of the variable.
+3. **API and model own keys** (§12.3, last point): keep them as overrides of
+   the default key only, as proposed, or drop them now that a key can be
+   chosen per request?
