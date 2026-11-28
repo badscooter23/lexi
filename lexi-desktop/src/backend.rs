@@ -1780,11 +1780,24 @@ pub(crate) mod tests {
         for (pre, quote) in [("data-cmd=\"", '"'), ("'data-cmd', '", '\'')] {
             for part in html.split(pre).skip(1) {
                 let name = &part[..part.find(quote).unwrap()];
-                if name != "none" {
+                // `${cmd}`: a helper's parameter; its callers are read below.
+                if name != "none" && !name.starts_with("${") {
                     used.insert(name.to_string());
                 }
             }
         }
+        // Icon buttons on key rows: `keyIconBtn(act, key, 'CMD', …)`.
+        for part in html.split("keyIconBtn('").skip(1) {
+            if let Some(name) = part.split(", '").nth(1) {
+                if let Some(end) = name.find('\'') {
+                    used.insert(name[..end].to_string());
+                }
+            }
+        }
+        assert!(
+            used.contains("key-copy"),
+            "the icon buttons' commands are read"
+        );
         let undefined: Vec<&String> = used
             .iter()
             .filter(|n| !html.contains(&format!("\n      '{n}': ")))
