@@ -39,7 +39,7 @@ not enforced). The wheel's engine functions (`lexi.compose_request_body`, …) w
 | List / add / remove a provider's APIs (bindings) | `provider_apis`, `add_provider_api`, `remove_provider_api` | `providers api list`, `providers api add`, `providers api rm` | `lexi.providers.apis`, `lexi.providers.add_api`, `lexi.providers.remove_api` | — |
 | Store / show / remove an API key | `set_api_key`, `remove_api_key`, `api_key_info` | `providers api-key set`, `providers api-key show`, `providers api-key remove` | `lexi.providers.set_key`, `lexi.providers.show_key`, `lexi.providers.remove_key` | Providers (API Key Management, Setup Wizard) |
 | List / add / remove where a key is looked for | `key_source_list`, `add_key_source`, `remove_key_source` | `providers api-key source list`, `providers api-key source add`, `providers api-key source rm` | `lexi.providers.key_sources`, `lexi.providers.add_key_source`, `lexi.providers.remove_key_source` | — |
-| Check an API key | `check_api_key` | `providers status` | `lexi.providers.status` | Providers |
+| Check an API key (one, or every key and the variable) | `check_api_key`, `check_provider_keys` | `providers status` | `lexi.providers.status` | Providers |
 | List / add / rename / remove a provider's named keys (other accounts'), choose the default | `key_names`, `add_named_key`, `rename_named_key`, `remove_named_key`, `set_default_key` | `providers keys list`, `providers keys add`, `providers keys rename`, `providers keys rm`, `providers keys default` | `lexi.providers.keys`, `lexi.providers.add_key`, `lexi.providers.rename_key`, `lexi.providers.delete_key`, `lexi.providers.set_default_key` | — |
 | Use a named key for a request (`--key KEY`, `PROVIDER#KEY`, Python `key=`) | `with_key`, `with_key_sync`, `split_key_arg` | `respond`, `generate`, `embed`, `upload`, `models hosted`, `providers status`, `jobs status`, `jobs wait` | `lexi.respond`, `lexi.stream`, `lexi.submit`, `lexi.prepare`, `lexi.embed`, `lexi.upload`, `lexi.models.hosted`, `lexi.providers.status`, `lexi.jobs.status`, `lexi.jobs.wait` | — |
 | List configured models | `load_models`, `model_summaries` | `models list` | `lexi.models.list` | Models |
@@ -68,7 +68,7 @@ not enforced). The wheel's engine functions (`lexi.compose_request_body`, …) w
 Building blocks used by the operations above, or run implicitly by every surface
 (home seeding fills in missing defaults at CLI/GUI startup); not surfaced on their own.
 
-`ensure_home`, `ensure_home_in`, `take_notices`, `default_aliases`, `lexi_home`, `template_names`, `provider_template`, `binding_config`, `provider_config`, `prompt_defaults`, `prompt_value`, `load_api_def`, `deep_merge`, `effective_config`, `resolve_api_key`, `build_headers`
+`ensure_home`, `ensure_home_in`, `take_notices`, `key_label`, `default_aliases`, `lexi_home`, `template_names`, `provider_template`, `binding_config`, `provider_config`, `prompt_defaults`, `prompt_value`, `load_api_def`, `deep_merge`, `effective_config`, `resolve_api_key`, `build_headers`
 
 ## CLI-only
 

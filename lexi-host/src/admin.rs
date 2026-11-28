@@ -79,14 +79,14 @@ pub fn provider_summaries() -> Result<Vec<Value>, HostError> {
 }
 
 /// Add a provider (`providers add`): checks the API definition exists, writes
-/// the entry, saves `api_key` as its saved key (the OS key store, else an
-/// owner-only key file — never the config), and makes `default_model` its
-/// default.
+/// the entry, saves `api_key` — `(key name, key)` — as that key's saved key
+/// (the OS key store, else an owner-only key file — never the config), and
+/// makes `default_model` its default.
 pub fn create_provider(
     name: &str,
     url: &str,
     default_model: &str,
-    api_key: Option<&str>,
+    api_key: Option<(&str, &str)>,
     api: &str,
     hosted_models: &str,
 ) -> Result<(), HostError> {
@@ -97,8 +97,8 @@ pub fn create_provider(
     entry.insert("api".into(), Value::from(api));
     entry.insert("default_model".into(), Value::from(default_model));
     config::add_provider(name, &entry)?;
-    if let Some(key) = api_key {
-        config::set_api_key(name, None, key)?;
+    if let Some((key_name, key)) = api_key {
+        config::set_api_key(&format!("{name}#{key_name}"), key)?;
     }
     config::set_kind_default(name, "chat", Some(default_model))
 }
@@ -114,15 +114,15 @@ fn mask(key: &str) -> String {
     }
 }
 
-/// A provider's (with `api`, one API's; as `provider#key`, one named key's)
-/// API key: `{provider, api, key_name, own, source, from, key, error,
-/// sources, save_to, store, env}` — `key_name` is the named key's name (null
-/// for the unnamed one).
+/// A provider's API keys (`docs/key-storage-design.md` §12).
+///
+/// For `provider#key` (`provider#` the unnamed key), that key: `{provider,
+/// key_name, label, source, from, key, error, sources, save_to, store,
+/// env}`:
 /// - `sources`: where it's looked for, in order — its `api_key` list with the
 ///   saved key in its place — each `{kind, from, state, note?}` (`kind`:
 ///   `env`, `file`, `command`, `saved`, `config`; `state`: `used`,
-///   `missing`, `error`, `not run`, `not checked`); `own` is false when the
-///   API has no list of its own and uses the provider's.
+///   `missing`, `error`, `not run`, `not checked`).
 /// - `source`/`from`: the kind and place of the key that's used, and `key` it
 ///   (masked unless `reveal`) — all null when there's none; `error` is a read
 ///   error that stopped the lookup. Commands run only with `reveal`: else a
@@ -132,11 +132,37 @@ fn mask(key: &str) -> String {
 ///   where saved keys are kept (`kind` `keychain`, `credential-manager`,
 ///   `secret-service` or `file`), and whether reading the saved key failed
 ///   because the store is locked.
-/// - `env`: the first environment variable the list reads, if any.
-pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value, HostError> {
-    let (provider, key) = config::split_key_arg(name, None)?;
+/// - `env`: the first environment variable the key's list reads, if any.
+///
+/// For a provider alone, every key (§12.5): [`config::key_names`]'s `{provider,
+/// default_key, variable, ready, uses, reason}` with `keys` each the above.
+pub fn api_key_info(target: &str, reveal: bool) -> Result<Value, HostError> {
+    let (provider, key) = config::split_key_arg(target, None)?;
     provider_config(&provider)?;
-    let plan = config::key_plan(name, api, reveal)?;
+    if key.is_some() {
+        return one_key_info(target, reveal);
+    }
+    let mut all = config::key_names(&provider)?;
+    let names: Vec<String> = all["keys"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .filter_map(|r| r["name"].as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut keys = Vec::new();
+    for name in &names {
+        let mut info = one_key_info(&format!("{provider}#{name}"), reveal)?;
+        info["default"] = Value::Bool(all["default_key"] == name.as_str());
+        keys.push(info);
+    }
+    all["keys"] = Value::Array(keys);
+    Ok(all)
+}
+
+fn one_key_info(target: &str, reveal: bool) -> Result<Value, HostError> {
+    let plan = config::key_plan(target, reveal)?;
     let lookup = &plan.lookup;
     let used = lookup.source();
     let env = plan.sources.iter().find_map(|s| match s {
@@ -144,10 +170,9 @@ pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value
         _ => None,
     });
     Ok(json!({
-        "provider": provider,
-        "api": api,
-        "key_name": key.filter(|k| k != config::DEFAULT_KEY),
-        "own": plan.own,
+        "provider": plan.provider,
+        "key_name": plan.key,
+        "label": config::key_label(&plan.key),
         "source": used.map(Source::kind),
         "from": used.map(Source::describe),
         "key": lookup.key.as_deref().map(|k| if reveal { k.to_string() } else { mask(k) }),

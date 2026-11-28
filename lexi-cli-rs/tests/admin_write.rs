@@ -145,7 +145,9 @@ fn providers_add_keys_rename_rm() {
                 "--default_model",
                 "llama",
                 "--api_key",
-                "gsk-1234567890abcd"
+                "gsk-1234567890abcd",
+                "--key_name",
+                "main"
             ]
         ),
         "Added provider groq.\n"
@@ -191,61 +193,92 @@ fn providers_add_keys_rename_rm() {
     .contains("unknown API"));
 
     // Keys: saved without the config listing them; masked by default, set
-    // via stdin, remove.
-    let config = std::fs::read_to_string(h.join("providers/providers-config.yaml")).unwrap();
-    assert!(!config.contains("api-key"), "{config}");
+    // via stdin, remove — always by name.
+    assert_eq!(
+        ok(h, &["providers", "api-key", "show", "groq#main"]),
+        "Looked for in this order:\n  1. providers/groq/keys/main (saved key) — used\nKey: gsk-**********abcd\n"
+    );
+    // Named none: every key.
     assert_eq!(
         ok(h, &["providers", "api-key", "show", "groq"]),
-        "Looked for in this order:\n  1. providers/groq/api-key (saved key) — used\nKey: gsk-**********abcd\n"
+        "groq#main ★\n  Looked for in this order:\n    1. providers/groq/keys/main (saved key) — used\n  Key: gsk-**********abcd\n"
     );
-    assert!(ok(h, &["providers", "api-key", "show", "groq", "--reveal"])
-        .ends_with("Key: gsk-1234567890abcd\n"));
+    assert!(ok(
+        h,
+        &["providers", "api-key", "show", "groq#main", "--reveal"]
+    )
+    .ends_with("Key: gsk-1234567890abcd\n"));
     let o = lexi(h)
-        .args(["providers", "api-key", "set", "groq"])
+        .args(["providers", "api-key", "set", "groq#main"])
         .write_stdin("piped-key-value\n")
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", stderr(&o));
-    assert!(
-        ok(h, &["providers", "api-key", "show", "groq", "-r"]).ends_with("Key: piped-key-value\n")
-    );
-    assert_eq!(
-        ok(h, &["providers", "api-key", "remove", "groq"]),
-        "Removed the saved API key for groq.\n"
-    );
-    assert_eq!(
-        ok(h, &["providers", "api-key", "remove", "groq"]),
-        "No saved API key for groq.\n"
-    );
-    assert_eq!(
-        ok(h, &["providers", "api-key", "show", "groq"]),
-        "Looked for in this order:\n  1. providers/groq/api-key (saved key) — missing: none saved\nNo API key configured for groq.\n"
-    );
-    // A key for one API.
     assert!(ok(
         h,
         &[
             "providers",
             "api-key",
-            "set",
+            "show",
             "groq",
-            "-v",
-            "emb",
-            "--api",
-            "chat-completions"
+            "--name",
+            "main",
+            "-r"
         ]
     )
-    .starts_with("Saved the API key for groq in providers/groq/api-key-chat-completions."));
+    .ends_with("Key: piped-key-value\n"));
+    // Changing a key without naming it is refused, before asking for it.
     assert!(
-        fails(h, &["providers", "api-key", "set", "nope", "-v", "k"]).contains("unknown provider")
+        fails(h, &["providers", "api-key", "set", "groq", "-v", "k"]).contains(
+            "name the key: `lexi providers api-key set groq#NAME` (groq's keys: #main ★)"
+        )
+    );
+    assert!(fails(h, &["providers", "api-key", "remove", "groq"]).contains("name the key"));
+    assert_eq!(
+        ok(h, &["providers", "api-key", "remove", "groq#main"]),
+        "Removed the saved API key for groq#main.\n"
+    );
+    assert_eq!(
+        ok(h, &["providers", "api-key", "remove", "groq#main"]),
+        "No saved API key for groq#main.\n"
+    );
+    assert_eq!(
+        ok(h, &["providers", "api-key", "show", "groq#main"]),
+        "Looked for in this order:\n  1. providers/groq/keys/main (saved key) — missing: none saved\nNo API key found.\n"
+    );
+    // There's no --api any more: keys belong to the provider.
+    assert!(
+        lexi_out(
+            h,
+            &[
+                "providers",
+                "api-key",
+                "set",
+                "groq#main",
+                "-v",
+                "x",
+                "--api",
+                "chat-completions"
+            ]
+        )
+        .status
+        .code()
+            == Some(2)
+    );
+    assert!(
+        fails(h, &["providers", "api-key", "set", "nope#k", "-v", "k"])
+            .contains("unknown provider")
     );
 
-    ok(h, &["providers", "api-key", "set", "groq", "--value", "k2"]);
+    ok(
+        h,
+        &["providers", "api-key", "set", "groq#main", "--value", "k2"],
+    );
     assert_eq!(
         ok(h, &["providers", "rename", "groq", "groq2"]),
         "Renamed provider groq -> groq2.\n"
     );
-    assert!(h.join("providers/groq2/api-key").exists());
+    assert!(h.join("providers/groq2/keys/main").exists());
     assert!(!h.join("providers/groq").exists());
     assert_eq!(
         ok(h, &["providers", "rm", "groq2"]),
@@ -287,22 +320,23 @@ async fn providers_status_checks_the_key_live() {
     };
     assert_eq!(
         stdout(&status(vec!["providers", "status", "nokey"]).await),
-        "nokey: no api-key\n"
+        "nokey: not ready (no key): add one with `lexi providers api-key set nokey#NAME`.\n"
     );
 
+    // A key saved before keys had names is the unnamed key, `p#`.
     std::fs::create_dir_all(h.join("providers/p")).unwrap();
     std::fs::write(h.join("providers/p/api-key"), "good").unwrap();
     assert_eq!(
         stdout(&status(vec!["providers", "status", "p"]).await),
-        "p: ready (key from providers/p/api-key)\n"
+        "p#: ready (key from providers/p/api-key)\np: requests that name no key use p# ★.\n"
     );
 
     std::fs::write(h.join("providers/p/api-key"), "bad").unwrap();
-    let o = status(vec!["providers", "status", "p", "--raw"]).await;
+    let o = status(vec!["providers", "status", "p#", "--raw"]).await;
     let v: Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(
         v,
-        json!({"provider": "p", "status": "invalid api-key", "source": "saved", "from": "providers/p/api-key"})
+        json!({"provider": "p", "key": "p#", "status": "invalid api-key", "source": "saved", "from": "providers/p/api-key", "verified": false, "reason": null})
     );
 }
 
@@ -310,11 +344,17 @@ async fn providers_status_checks_the_key_live() {
 fn key_sources_list_add_rm() {
     let home = seeded_home();
     let h = home.path();
+    // A fresh install: no keys, and the provider's variable isn't one.
     assert_eq!(
         ok(h, &["providers", "api-key", "source", "list", "openai"]),
-        "Looked for in this order:\n  1. $OPENAI_API_KEY\n  2. providers/openai/api-key (saved key; last unless api_key places it)\n"
+        "openai has no keys.\n$OPENAI_API_KEY isn't set (when it is, requests that name no key use it).\n"
     );
-    assert!(ok(
+    ok(h, &["providers", "keys", "add", "openai#work"]);
+    assert_eq!(
+        ok(h, &["providers", "api-key", "source", "list", "openai#work"]),
+        "Looked for in this order:\n  1. providers/openai/keys/work (saved key; last unless api_key places it)\n"
+    );
+    assert!(fails(
         h,
         &[
             "providers",
@@ -323,11 +363,26 @@ fn key_sources_list_add_rm() {
             "add",
             "openai",
             "--file",
+            "~/keys/openai"
+        ]
+    )
+    .contains("name the key"));
+    assert!(ok(
+        h,
+        &[
+            "providers",
+            "api-key",
+            "source",
+            "add",
+            "openai#work",
+            "--file",
             "~/keys/openai",
             "--first"
         ]
     )
-    .starts_with("Updated openai's api_key.\nLooked for in this order:\n  1. ~/keys/openai\n"));
+    .starts_with(
+        "Updated openai#work's api_key.\nLooked for in this order:\n  1. ~/keys/openai\n"
+    ));
     ok(
         h,
         &[
@@ -336,6 +391,8 @@ fn key_sources_list_add_rm() {
             "source",
             "add",
             "openai",
+            "--name",
+            "work",
             "--saved",
             "--first",
         ],
@@ -344,7 +401,14 @@ fn key_sources_list_add_rm() {
     assert!(config.contains("- saved\n"), "{config}");
     let v = lexi_out(
         h,
-        &["--json", "providers", "api-key", "source", "list", "openai"],
+        &[
+            "--json",
+            "providers",
+            "api-key",
+            "source",
+            "list",
+            "openai#work",
+        ],
     );
     let v: Value = serde_json::from_slice(&v.stdout).unwrap();
     let kinds: Vec<&str> = v["sources"]
@@ -353,7 +417,7 @@ fn key_sources_list_add_rm() {
         .iter()
         .map(|r| r["kind"].as_str().unwrap())
         .collect();
-    assert_eq!(kinds, ["saved", "file", "env"]);
+    assert_eq!(kinds, ["saved", "file"]);
 
     assert_eq!(
         ok(
@@ -363,12 +427,12 @@ fn key_sources_list_add_rm() {
                 "api-key",
                 "source",
                 "rm",
-                "openai",
+                "openai#work",
                 "--file",
                 "~/keys/openai"
             ]
         ),
-        "Removed it from openai's api_key.\n"
+        "Removed it from openai#work's api_key.\n"
     );
     assert_eq!(
         ok(
@@ -378,12 +442,12 @@ fn key_sources_list_add_rm() {
                 "api-key",
                 "source",
                 "rm",
-                "openai",
+                "openai#work",
                 "--file",
                 "~/keys/openai"
             ]
         ),
-        "openai's api_key doesn't list it.\n"
+        "openai#work's api_key doesn't list it.\n"
     );
     // Exactly one place (a usage error).
     let usage = |args: &[&str]| {
@@ -391,13 +455,13 @@ fn key_sources_list_add_rm() {
         assert_eq!(o.status.code(), Some(2), "{args:?}");
         stderr(&o)
     };
-    assert!(usage(&["providers", "api-key", "source", "add", "openai"]).contains("required"));
+    assert!(usage(&["providers", "api-key", "source", "add", "openai#work"]).contains("required"));
     assert!(usage(&[
         "providers",
         "api-key",
         "source",
         "add",
-        "openai",
+        "openai#work",
         "--env",
         "A",
         "--file",
@@ -411,7 +475,7 @@ fn key_sources_list_add_rm() {
             "api-key",
             "source",
             "add",
-            "openai",
+            "openai#work",
             "--command",
             "op 'read"
         ]
@@ -442,6 +506,7 @@ async fn a_command_source_supplies_the_key() {
         ),
     )
     .unwrap();
+    // `api_key` written in the config: the unnamed key, `p#`.
     ok(
         &h,
         &[
@@ -449,20 +514,20 @@ async fn a_command_source_supplies_the_key() {
             "api-key",
             "source",
             "add",
-            "p",
+            "p#",
             "--command",
             "sh -c 'echo from-cmd'",
         ],
     );
     // Showing doesn't run it; a live check does.
-    assert!(ok(&h, &["providers", "api-key", "show", "p"]).contains(
+    assert!(ok(&h, &["providers", "api-key", "show", "p#"]).contains(
         "1. the command `sh -c echo from-cmd` — not run: runs when a request needs the key"
     ));
     let mut cmd = lexi(&h);
-    cmd.args(["providers", "status", "p"]);
+    cmd.args(["providers", "status", "p#"]);
     assert_eq!(
         stdout(&run(cmd).await),
-        "p: ready (key from the command `sh -c echo from-cmd`)\n"
+        "p#: ready (key from the command `sh -c echo from-cmd`)\n"
     );
 }
 

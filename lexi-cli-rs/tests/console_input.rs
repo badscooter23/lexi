@@ -41,26 +41,27 @@ async fn questions_go_to_the_host_and_secrets_stay_out_of_history() {
     // Never the real keychain.
     std::env::set_var("LEXI_KEY_STORE", "file");
 
-    let (code, out, err, asked) = run("providers api-key set openai", Some("sk-console-123")).await;
+    let (code, out, err, asked) =
+        run("providers api-key set openai#work", Some("sk-console-123")).await;
     assert_eq!(code, 0, "{err}");
     assert_eq!(asked, [("Enter API key: ".to_string(), true)]);
     assert!(!out.contains("sk-console-123") && !err.contains("sk-console-123"));
-    let saved = std::fs::read_to_string(home.path().join("providers/openai/api-key")).unwrap();
+    let saved = std::fs::read_to_string(home.path().join("providers/openai/keys/work")).unwrap();
     assert_eq!(saved.trim(), "sk-console-123");
     let history = lexi_cli::history_entries();
     assert_eq!(
         history.last().map(String::as_str),
-        Some("providers api-key set openai")
+        Some("providers api-key set openai#work")
     );
     assert!(!std::fs::read_to_string(home.path().join("history"))
         .unwrap()
         .contains("sk-console"));
 
     // Declining fails the command and changes nothing.
-    let (code, _, err, _) = run("providers api-key set anthropic", None).await;
+    let (code, _, err, _) = run("providers api-key set anthropic#work", None).await;
     assert_eq!(code, 1);
     assert!(err.contains("nothing was entered"), "{err}");
-    assert!(!home.path().join("providers/anthropic/api-key").exists());
+    assert!(!home.path().join("providers/anthropic/keys/work").exists());
 
     // `sh` / `!` are off for in-process hosts.
     let (code, _, err, asked) = run("!echo hi", None).await;

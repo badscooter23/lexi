@@ -1,5 +1,6 @@
-//! Named keys: several accounts per provider (`docs/key-storage-design.md`
-//! §11) — `providers keys …`, `PROVIDER#KEY`, `--key`, `default_key`.
+//! A provider's keys (`docs/key-storage-design.md` §11, §12) — `providers
+//! keys …`, `PROVIDER#KEY` (`PROVIDER#` a key from before names), `--key`,
+//! `default_key`.
 
 mod common;
 
@@ -68,9 +69,10 @@ async fn accounts() -> (MockServer, tempfile::TempDir) {
 async fn a_request_is_billed_to_the_key_it_names() {
     let (_server, home) = accounts().await;
     let h = home.path();
+    // `api_key: []` in the config: a key from before names, written `p#`.
     ok(
         h,
-        &["providers", "api-key", "set", "p", "--value", "sk-main"],
+        &["providers", "api-key", "set", "p#", "--value", "sk-main"],
     );
     assert_eq!(
         ok(h, &["providers", "api-key", "set", "p#work", "--value", "sk-work"]),
@@ -81,6 +83,7 @@ async fn a_request_is_billed_to_the_key_it_names() {
         cmd.args(args);
         run(cmd)
     };
+    // With no default_key, the unnamed key is the default (as before).
     assert_eq!(
         stdout(&say(&["respond", "p", "hi"]).await).trim(),
         "billed to main"
@@ -98,51 +101,60 @@ async fn a_request_is_billed_to_the_key_it_names() {
         .await
         .status
         .success());
-    let both = say(&["respond", "p#work", "hi", "--key", "default"]).await;
+    let both = say(&["respond", "p#work", "hi", "--key", "other"]).await;
     assert!(
         stderr(&both).contains("name different keys"),
         "{}",
         stderr(&both)
     );
+    // `default` isn't a key name.
+    let old = say(&["respond", "p#default", "hi"]).await;
+    assert!(
+        stderr(&old).contains("`openai#`") || stderr(&old).contains("nothing after the #"),
+        "{}",
+        stderr(&old)
+    );
 
-    // The default key is used when a request names none; #default is the unnamed one.
+    // The default key is used when a request names none; `p#` names the unnamed one.
     ok(h, &["providers", "keys", "default", "p", "work"]);
     assert_eq!(
         stdout(&say(&["respond", "p", "hi"]).await).trim(),
         "billed to work"
     );
     assert_eq!(
-        stdout(&say(&["respond", "p#default", "hi"]).await).trim(),
+        stdout(&say(&["respond", "p#", "hi"]).await).trim(),
         "billed to main"
     );
 
-    // Status checks the key it's given.
-    let st = say(&["providers", "status", "p", "--key", "default"]).await;
-    assert_eq!(
-        stdout(&st),
-        "p#default: ready (key from providers/p/api-key)\n"
-    );
+    // Status checks the key it's given — or, named none, every key.
+    let st = say(&["providers", "status", "p", "--key", ""]).await;
+    assert_eq!(stdout(&st), "p#: ready (key from providers/p/api-key)\n");
     let st = say(&["providers", "status", "p#work"]).await;
     assert_eq!(
         stdout(&st),
         "p#work: ready (key from providers/p/keys/work)\n"
     );
+    let st = say(&["providers", "status", "p"]).await;
+    assert_eq!(
+        stdout(&st),
+        "p#: ready (key from providers/p/api-key)\np#work: ready (key from providers/p/keys/work)\np: requests that name no key use p#work ★.\n"
+    );
 
     let unknown = say(&["respond", "p#nope", "hi"]).await;
     assert!(
-        stderr(&unknown).contains("p has no key named \"nope\" (its keys: default, work)"),
+        stderr(&unknown).contains("p has no key named \"nope\" (its keys: #, #work)"),
         "{}",
         stderr(&unknown)
     );
 }
 
 #[test]
-fn named_keys_are_listed_added_renamed_and_removed() {
+fn keys_are_listed_added_renamed_and_removed() {
     let home = seeded_home();
     let h = home.path();
     assert_eq!(
         ok(h, &["providers", "keys", "add", "openai", "work"]),
-        "Added the key openai#work. Save it with: lexi providers api-key set openai#work\n"
+        "Added the key openai#work. Save its value with: lexi providers api-key set openai#work\n"
     );
     ok(
         h,
@@ -174,40 +186,58 @@ fn named_keys_are_listed_added_renamed_and_removed() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|k| k["name"].as_str().unwrap())
+        .map(|k| k["label"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["default", "work", "personal"]);
-    assert_eq!(list["default_key"], "default");
+    // A fresh install has no unnamed key, and the variable isn't a key.
+    assert_eq!(names, ["#work", "#personal"]);
+    assert!(list["default_key"].is_null());
+    assert_eq!(list["reason"], "no default key");
     let shown = json_of(h, &["providers", "api-key", "show", "openai#personal"]);
     assert_eq!(shown["key_name"], "personal");
     assert_eq!(shown["save_to"], "providers/openai/keys/personal");
     assert_eq!(shown["key"], "****");
 
-    ok(h, &["providers", "keys", "default", "openai", "personal"]);
+    ok(h, &["providers", "keys", "default", "openai#personal"]);
     assert_eq!(
         ok(h, &["providers", "keys", "default", "openai"]),
-        "openai's requests use the key personal (openai#personal).\n"
+        "openai's default key is openai#personal: requests that name no key use it.\n"
     );
+    assert!(ok(h, &["providers", "keys", "list", "openai"])
+        .starts_with("openai's keys (★ = used when a request names none):\n  #work      no key\n★ #personal  providers/openai/keys/personal\n$OPENAI_API_KEY isn't set"));
     ok(
         h,
-        &["providers", "keys", "rename", "openai", "personal", "home"],
+        &["providers", "keys", "rename", "openai#personal", "home"],
     );
     assert!(h.join("providers/openai/keys/home").exists());
     assert_eq!(
         json_of(h, &["providers", "keys", "list", "openai"])["default_key"],
         "home"
     );
-    ok(h, &["providers", "keys", "rm", "openai", "home"]);
-    assert!(!h.join("providers/openai/keys/home").exists());
+    ok(
+        h,
+        &["providers", "keys", "rename", "openai", "home", "personal"],
+    );
+    // The default can be removed: with one key left, that's the default.
+    assert!(ok(h, &["providers", "keys", "rm", "openai#personal"])
+        .starts_with("Removed the key openai#personal"));
+    assert!(!h.join("providers/openai/keys/personal").exists());
     assert_eq!(
         json_of(h, &["providers", "keys", "list", "openai"])["default_key"],
-        "default"
+        "work"
+    );
+    // And the only key: the provider has none.
+    assert_eq!(
+        ok(h, &["providers", "keys", "rm", "openai", "work"]),
+        "Removed the key openai#work and its saved key. openai has no key now.\n"
     );
 
     // Commands that change the provider itself take it alone.
     assert!(fails(h, &["providers", "rm", "openai#work"]).contains("leave out #work"));
     assert!(fails(h, &["models", "list", "openai#work"]).contains("leave out #work"));
-    assert!(fails(h, &["providers", "keys", "add", "openai", "default"]).contains("unnamed key"));
+    assert!(
+        fails(h, &["providers", "keys", "add", "openai", "default"]).contains("isn't a key name")
+    );
+    assert!(fails(h, &["providers", "keys", "add", "openai#"]).contains("needs a name"));
     assert!(fails(
         h,
         &[
@@ -221,18 +251,4 @@ fn named_keys_are_listed_added_renamed_and_removed() {
         ]
     )
     .contains("invalid provider name"));
-    assert!(fails(
-        h,
-        &[
-            "providers",
-            "api-key",
-            "set",
-            "openai#work",
-            "--api",
-            "responses",
-            "--value",
-            "x"
-        ]
-    )
-    .contains("covers every API"));
 }

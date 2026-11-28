@@ -8,12 +8,15 @@ use crate::output::{scalar, table, Io};
 pub(crate) async fn run(io: &mut Io<'_>, cmd: ProvidersCmd) -> u8 {
     match cmd {
         ProvidersCmd::List { raw, table } => list(io, raw, table),
-        ProvidersCmd::Status { name, raw, key } => status(io, &name, raw, key.as_deref()).await,
+        ProvidersCmd::Status { name, raw, key } => {
+            Box::pin(status(io, &name, raw, key.as_deref())).await
+        }
         ProvidersCmd::Add {
             name,
             url,
             default_model,
             api_key,
+            key_name,
             api,
             hosted_models,
         } => add(
@@ -21,31 +24,21 @@ pub(crate) async fn run(io: &mut Io<'_>, cmd: ProvidersCmd) -> u8 {
             &name,
             &url,
             &default_model,
-            api_key.as_deref(),
+            key_name.as_deref().zip(api_key.as_deref()),
             &api,
             &hosted_models,
         ),
         ProvidersCmd::ApiKey { cmd } => match cmd {
-            ApiKeyCmd::Set {
-                name,
-                value,
-                api,
-                key,
-            } => match key_arg(io, &name, key.as_deref()) {
-                Ok((p, arg)) => key_set(io, &p, &arg, value, api.as_deref()),
+            ApiKeyCmd::Set { name, value, key } => match key_target(io, &name, key.as_deref()) {
+                Ok((p, target)) => key_set(io, &p, &target, value),
                 Err(code) => code,
             },
-            ApiKeyCmd::Show {
-                name,
-                reveal,
-                api,
-                key,
-            } => match key_arg(io, &name, key.as_deref()) {
-                Ok((_, arg)) => key_show(io, &arg, reveal, api.as_deref()),
+            ApiKeyCmd::Show { name, reveal, key } => match key_target(io, &name, key.as_deref()) {
+                Ok((_, target)) => key_show(io, &target, reveal),
                 Err(code) => code,
             },
-            ApiKeyCmd::Remove { name, api, key } => match key_arg(io, &name, key.as_deref()) {
-                Ok((p, arg)) => key_remove(io, &p, &arg, api.as_deref()),
+            ApiKeyCmd::Remove { name, key } => match key_target(io, &name, key.as_deref()) {
+                Ok((p, target)) => key_remove(io, &p, &target),
                 Err(code) => code,
             },
             ApiKeyCmd::Source { cmd } => key_sources(io, cmd),
@@ -92,148 +85,311 @@ fn provider_cfg(io: &mut Io<'_>, name: &str) -> Result<Value, u8> {
     lexi_host::admin::provider_config(name).map_err(|e| io.fail(e))
 }
 
-/// A key command's provider (`openai`, `openai#work`) and `--name`: the
-/// provider, and the argument the key functions take (`openai#work`, or
-/// `openai` for its unnamed key).
-fn key_arg(io: &mut Io<'_>, name: &str, key: Option<&str>) -> Result<(String, String), u8> {
+/// A key command's provider (`openai`, `openai#work`, `openai#`) and
+/// `--name`: the provider, and the target the key functions take
+/// (`openai#work`, or `openai` when no key is named).
+fn key_target(io: &mut Io<'_>, name: &str, key: Option<&str>) -> Result<(String, String), u8> {
     let (p, _, label) = super::request_key(io, name, key)?;
-    let arg = if label.ends_with("#default") {
-        p.clone()
-    } else {
-        label
-    };
-    Ok((p, arg))
+    Ok((p, label))
+}
+
+/// A `providers keys` command's provider and key: `openai#work`, or
+/// `openai work` (`openai#` / `openai ''` the unnamed key); `None` when
+/// neither names one.
+fn keys_target(
+    io: &mut Io<'_>,
+    name: &str,
+    key: Option<&str>,
+) -> Result<(String, Option<String>), u8> {
+    let (p, inline) = lexi_host::config::split_key_arg(name, None).map_err(|e| io.fail(e))?;
+    match (inline, key) {
+        (Some(a), Some(b)) => Err(io.fail(format!(
+            "{name} already names the key {}: leave out {b:?}",
+            lexi_host::config::key_label(&a)
+        ))),
+        (Some(a), None) => Ok((p, Some(a))),
+        (None, Some(b)) => lexi_host::config::split_key_arg(&p, Some(b)).map_err(|e| io.fail(e)),
+        (None, None) => Ok((p, None)),
+    }
+}
+
+/// `openai#work`, `openai#` — a key as written after its provider.
+fn written(provider: &str, key: &str) -> String {
+    format!("{provider}{}", lexi_host::config::key_label(key))
 }
 
 /// The provider's keys and what to do with them (`providers keys …`).
 fn keys(io: &mut Io<'_>, cmd: KeysCmd) -> u8 {
-    let name = match &cmd {
-        KeysCmd::List { name }
-        | KeysCmd::Add { name, .. }
-        | KeysCmd::Rename { name, .. }
-        | KeysCmd::Rm { name, .. }
-        | KeysCmd::Default { name, .. } => name.clone(),
-    };
-    if let Err(code) = super::plain_provider(io, &name) {
-        return code;
-    }
-    if let Err(code) = provider_cfg(io, &name) {
-        return code;
-    }
     use lexi_host::config as c;
     match cmd {
-        KeysCmd::List { name } => match c::key_names(&name) {
-            Ok(v) => io.result(keys_text(&v), v),
-            Err(e) => io.fail(e),
-        },
-        KeysCmd::Add { name, key } => match c::add_named_key(&name, &key) {
-            Ok(true) => io.result(
-                format!(
-                    "Added the key {name}#{key}. Save it with: lexi providers api-key set {name}#{key}"
+        KeysCmd::List { name } => {
+            if let Err(code) = super::plain_provider(io, &name) {
+                return code;
+            }
+            if let Err(code) = provider_cfg(io, &name) {
+                return code;
+            }
+            match c::key_names(&name) {
+                Ok(v) => io.result(keys_text(&v), v),
+                Err(e) => io.fail(e),
+            }
+        }
+        KeysCmd::Add { name, key } => {
+            let (p, key) = match keys_target(io, &name, key.as_deref()) {
+                Ok((p, Some(k))) => (p, k),
+                Ok((p, None)) => {
+                    return io.fail(format!("name the key: lexi providers keys add {p}#NAME"))
+                }
+                Err(code) => return code,
+            };
+            match c::add_named_key(&p, &key) {
+                Ok(true) => io.result(
+                    format!(
+                        "Added the key {}. Save its value with: lexi providers api-key set {}",
+                        written(&p, &key),
+                        written(&p, &key)
+                    ),
+                    json!({ "provider": p, "key_name": key, "added": true }),
                 ),
-                json!({ "provider": name, "key_name": key, "added": true }),
-            ),
-            Ok(false) => io.result(
-                format!("{name} already has a key named {key}."),
-                json!({ "provider": name, "key_name": key, "added": false }),
-            ),
-            Err(e) => io.fail(e),
-        },
-        KeysCmd::Rename { name, old, new } => match c::rename_named_key(&name, &old, &new) {
-            Ok(()) => io.result(
-                format!("Renamed {name}#{old} -> {name}#{new}."),
-                json!({ "provider": name, "renamed": old, "to": new }),
-            ),
-            Err(e) => io.fail(e),
-        },
-        KeysCmd::Rm { name, key } => match c::remove_named_key(&name, &key) {
-            Ok(()) => io.result(
-                format!("Removed the key {name}#{key} and its saved key."),
-                json!({ "provider": name, "removed": key }),
-            ),
-            Err(e) => io.fail(e),
-        },
-        KeysCmd::Default { name, key: None } => match c::key_names(&name) {
-            Ok(v) => {
-                let d = scalar(v.get("default_key"));
-                let msg = if d == c::DEFAULT_KEY {
-                    format!("{name}'s requests use its unnamed key (default).")
-                } else {
-                    format!("{name}'s requests use the key {d} ({name}#{d}).")
-                };
-                io.result(msg, json!({ "provider": name, "default_key": d }))
+                Ok(false) => io.result(
+                    format!("{p} already has the key {}.", written(&p, &key)),
+                    json!({ "provider": p, "key_name": key, "added": false }),
+                ),
+                Err(e) => io.fail(e),
             }
-            Err(e) => io.fail(e),
-        },
-        KeysCmd::Default {
-            name,
-            key: Some(key),
-        } => match c::set_default_key(&name, Some(&key)) {
-            Ok(()) => {
-                let msg = if key == c::DEFAULT_KEY {
-                    format!("{name}'s requests use its unnamed key again.")
-                } else {
-                    format!("{name}'s requests now use the key {key}, unless they name another.")
-                };
-                io.result(msg, json!({ "provider": name, "default_key": key }))
+        }
+        KeysCmd::Rename { name, old, new } => {
+            // `rename openai#old new`, or `rename openai old new`.
+            let (p, old, new) = match (name.contains('#'), new) {
+                (true, None) => match keys_target(io, &name, None) {
+                    Ok((p, Some(k))) => (p, k, old),
+                    Ok((p, None)) => (p, String::new(), old),
+                    Err(code) => return code,
+                },
+                (false, Some(new)) => match keys_target(io, &name, Some(&old)) {
+                    Ok((p, k)) => (p, k.unwrap_or_default(), new),
+                    Err(code) => return code,
+                },
+                (true, Some(extra)) => {
+                    return io.fail(format!(
+                        "{name} already names the key: write `lexi providers keys rename {name} {old}` (not {extra:?} too)"
+                    ))
+                }
+                (false, None) => {
+                    return io.fail(format!(
+                        "give the key and its new name: lexi providers keys rename {name}#{old} NEW"
+                    ))
+                }
+            };
+            match c::rename_named_key(&p, &old, &new) {
+                Ok(()) => io.result(
+                    format!("Renamed {} -> {}.", written(&p, &old), written(&p, &new)),
+                    json!({ "provider": p, "renamed": old, "to": new }),
+                ),
+                Err(e) => io.fail(e),
             }
-            Err(e) => io.fail(e),
-        },
+        }
+        KeysCmd::Rm { name, key } => {
+            let (p, key) = match keys_target(io, &name, key.as_deref()) {
+                Ok((p, Some(k))) => (p, k),
+                Ok((p, None)) => {
+                    return io.fail(format!("name the key: lexi providers keys rm {p}#NAME"))
+                }
+                Err(code) => return code,
+            };
+            match c::remove_named_key(&p, &key) {
+                Ok(()) => {
+                    let after = c::key_names(&p).ok();
+                    let note = match after.as_ref().and_then(|v| v["reason"].as_str()) {
+                        Some("no key") => format!(" {p} has no key now."),
+                        Some("no default key") => format!(
+                            " {p} has no default key now: requests must name one until you choose one with `lexi providers keys default {p} NAME`."
+                        ),
+                        _ => String::new(),
+                    };
+                    io.result(
+                        format!(
+                            "Removed the key {} and its saved key.{note}",
+                            written(&p, &key)
+                        ),
+                        json!({ "provider": p, "removed": key }),
+                    )
+                }
+                Err(e) => io.fail(e),
+            }
+        }
+        KeysCmd::Default { name, key } => {
+            let (p, key) = match keys_target(io, &name, key.as_deref()) {
+                Ok(v) => v,
+                Err(code) => return code,
+            };
+            match key {
+                None => match c::key_names(&p) {
+                    Ok(v) => {
+                        let mut msg = match v["default_key"].as_str() {
+                            Some(d) => format!(
+                                "{p}'s default key is {}: requests that name no key use it.",
+                                written(&p, d)
+                            ),
+                            None => {
+                                format!("{p} has no default key ({}).", scalar(v.get("reason")))
+                            }
+                        };
+                        if v["variable"]["set"] == true {
+                            msg.push_str(&format!(
+                                " But ${} is set, so they use that instead.",
+                                scalar(v["variable"].get("name"))
+                            ));
+                        }
+                        io.result(
+                            msg,
+                            json!({ "provider": p, "default_key": v["default_key"] }),
+                        )
+                    }
+                    Err(e) => io.fail(e),
+                },
+                Some(key) => match c::set_default_key(&p, &key) {
+                    Ok(()) => io.result(
+                        format!(
+                            "{p}'s requests now use the key {} unless they name another.",
+                            written(&p, &key)
+                        ),
+                        json!({ "provider": p, "default_key": key }),
+                    ),
+                    Err(e) => io.fail(e),
+                },
+            }
+        }
     }
 }
 
-/// `openai's keys (* = used when a request names none):` then one line per
-/// key — its name and where it comes from.
+/// The variable's line for listings: `$OPENAI_API_KEY is set: requests that
+/// name no key use it.` (none without a variable).
+fn variable_line(v: &Value) -> Option<String> {
+    let name = v["variable"]["name"].as_str()?;
+    Some(if v["variable"]["set"] == true {
+        format!("${name} is set: requests that name no key use it.")
+    } else {
+        format!("${name} isn't set (when it is, requests that name no key use it).")
+    })
+}
+
+/// `openai's keys (★ = used when a request names none):` then one line per
+/// key — how it's written and where it comes from — then the variable, and
+/// what's not ready.
 fn keys_text(v: &Value) -> String {
     let provider = scalar(v.get("provider"));
     let rows = v["keys"].as_array().cloned().unwrap_or_default();
-    let width = rows
-        .iter()
-        .map(|k| scalar(k.get("name")).len())
-        .max()
-        .unwrap_or(0);
-    let mut lines = vec![format!(
-        "{provider}'s keys (* = used when a request names none):"
-    )];
-    for k in rows {
-        let mark = if k["default"] == true { '*' } else { ' ' };
-        let from = match (k["error"].as_str(), k["from"].as_str()) {
-            (Some(e), _) => format!("error: {e}"),
-            (None, Some(f)) => f.to_string(),
-            (None, None) => "no key".into(),
-        };
-        let name = scalar(k.get("name"));
-        lines.push(format!("{mark} {name:width$}  {from}"));
+    let mut lines = Vec::new();
+    if rows.is_empty() {
+        lines.push(format!(
+            "{provider} has no keys. Add one with `lexi providers api-key set {provider}#NAME`."
+        ));
+    } else {
+        let width = rows
+            .iter()
+            .map(|k| scalar(k.get("label")).len())
+            .max()
+            .unwrap_or(0);
+        lines.push(format!(
+            "{provider}'s keys (★ = used when a request names none):"
+        ));
+        for k in rows {
+            let mark = if k["default"] == true { '★' } else { ' ' };
+            let from = match (k["error"].as_str(), k["from"].as_str()) {
+                (Some(e), _) => format!("error: {e}"),
+                (None, Some(f)) => f.to_string(),
+                (None, None) => "no key".into(),
+            };
+            let old = if k["name"] == "" {
+                "  (saved before keys had names; rename it to give it one)"
+            } else {
+                ""
+            };
+            let label = scalar(k.get("label"));
+            lines.push(format!("{mark} {label:width$}  {from}{old}"));
+        }
+    }
+    if let Some(l) = variable_line(v) {
+        lines.push(l);
+    }
+    if let Some(r) = v["reason"].as_str() {
+        lines.push(format!("Not ready for requests that name no key: {r}."));
     }
     lines.push(format!(
-        "Use one with --key KEY or {provider}#KEY; add one with `lexi providers keys add {provider} KEY`."
+        "Use a key with {provider}#KEY (or --key KEY); add one with `lexi providers api-key set {provider}#NAME`."
     ));
     lines.join("\n")
 }
 
+/// One check's line: `openai#work: ready (key from …)`.
+fn status_line(row: &Value) -> String {
+    let label = scalar(row.get("key"));
+    if let Some(e) = row["error"].as_str() {
+        return format!("{label}: error: {e}");
+    }
+    let detail = match (row["from"].as_str(), row["reason"].as_str()) {
+        (Some(f), _) => format!(" (key from {f})"),
+        (None, Some(r)) => format!(": {r}"),
+        _ => String::new(),
+    };
+    format!("{label}: {}{detail}", scalar(row.get("status")))
+}
+
+/// Check a key — or, with none named, every key and the variable (§12.5).
 async fn status(io: &mut Io<'_>, name: &str, raw: bool, key: Option<&str>) -> u8 {
     let (provider, key, label) = match super::request_key(io, name, key) {
         Ok(k) => k,
         Err(code) => return code,
     };
-    let name = label.as_str();
-    let check = lexi_host::check_api_key(&provider);
-    match lexi_host::config::with_key(key, check).await {
-        Ok(st) => {
-            let json = json!({ "provider": name, "status": st.status, "source": st.source, "from": st.from });
-            let human = if raw {
-                json.to_string()
-            } else {
-                let from = st
-                    .from
-                    .map(|s| format!(" (key from {s})"))
-                    .unwrap_or_default();
-                format!("{name}: {}{from}", st.status)
-            };
-            io.result(human, json)
-        }
-        Err(e) => io.fail(e),
+    if key.is_some() {
+        let check = lexi_host::check_api_key(&provider);
+        return match lexi_host::config::with_key(key, check).await {
+            Ok(st) => {
+                let mut json = st.to_value(&label);
+                json["provider"] = json!(provider);
+                let human = if raw {
+                    json.to_string()
+                } else {
+                    status_line(&json)
+                };
+                io.result(human, json)
+            }
+            Err(e) => io.fail(e),
+        };
     }
+    let all = match Box::pin(lexi_host::check_provider_keys(&provider)).await {
+        Ok(v) => v,
+        Err(e) => return io.fail(e),
+    };
+    let mut lines: Vec<String> = all["keys"]
+        .as_array()
+        .map(|rows| rows.iter().map(status_line).collect())
+        .unwrap_or_default();
+    if let Some(st) = all["variable"]["status"].as_str() {
+        lines.push(format!("${}: {st}", scalar(all["variable"].get("name"))));
+    }
+    lines.push(match (&all["uses"], all["reason"].as_str()) {
+        (u, _) if u.get("variable").is_some() => format!(
+            "{provider}: requests that name no key use ${} (from your environment).",
+            scalar(u.get("variable"))
+        ),
+        (u, _) if u.get("key").is_some() => format!(
+            "{provider}: requests that name no key use {} ★.",
+            written(&provider, &scalar(u.get("key")))
+        ),
+        (_, Some("no key")) => format!(
+            "{provider}: not ready (no key): add one with `lexi providers api-key set {provider}#NAME`."
+        ),
+        (_, Some(r)) => format!("{provider}: not ready for requests that name no key ({r})."),
+        _ => String::new(),
+    });
+    let human = if raw {
+        all.to_string()
+    } else {
+        lines.join("\n")
+    };
+    io.result(human, all)
 }
 
 fn add(
@@ -241,7 +397,7 @@ fn add(
     name: &str,
     url: &str,
     default_model: &str,
-    api_key: Option<&str>,
+    api_key: Option<(&str, &str)>,
     api: &str,
     hosted_models: &str,
 ) -> u8 {
@@ -258,7 +414,7 @@ fn add(
 fn saved_message(lead: &str, saved: &lexi_host::config::SavedKey) -> String {
     let mut msg = format!("{lead} {}.", saved.location);
     if saved.added {
-        msg.push_str(" Updated its api_key in providers-config.yaml.");
+        msg.push_str(" Updated providers-config.yaml.");
     }
     match &saved.used {
         Some(used) if *used != saved.location => msg.push_str(&format!(
@@ -269,15 +425,17 @@ fn saved_message(lead: &str, saved: &lexi_host::config::SavedKey) -> String {
     msg
 }
 
-fn key_set(
-    io: &mut Io<'_>,
-    provider: &str,
-    name: &str,
-    value: Option<String>,
-    api: Option<&str>,
-) -> u8 {
+fn key_set(io: &mut Io<'_>, provider: &str, target: &str, value: Option<String>) -> u8 {
     if let Err(code) = provider_cfg(io, provider) {
         return code;
+    }
+    // A command that changes a key names it (§12.5): refused before asking
+    // for the key.
+    if !target.contains('#') {
+        return match lexi_host::config::set_api_key(target, "") {
+            Err(e) => io.fail(e),
+            Ok(_) => 1,
+        };
     }
     let key = match value {
         Some(v) => v,
@@ -286,15 +444,15 @@ fn key_set(
             Err(e) => return io.fail(e),
         },
     };
-    match lexi_host::config::set_api_key(name, api, &key) {
+    match lexi_host::config::set_api_key(target, &key) {
         Ok(saved) => {
             let mut json = saved.to_value();
             json["provider"] = json!(provider);
-            json["key_name"] = json!(name.split_once('#').map(|(_, k)| k));
-            let mut msg = saved_message(&format!("Saved the API key for {name} in"), &saved);
-            if name.contains('#') && saved.added {
+            json["key_name"] = json!(target.split_once('#').map(|(_, k)| k));
+            let mut msg = saved_message(&format!("Saved the API key for {target} in"), &saved);
+            if saved.added {
                 msg = msg.replace(
-                    "Updated its api_key in providers-config.yaml.",
+                    "Updated providers-config.yaml.",
                     "Added the key to providers-config.yaml.",
                 );
             }
@@ -304,23 +462,14 @@ fn key_set(
     }
 }
 
-/// Each `api_key` source in order with what was found there, then the key
-/// (`sk-a…wxyz`-style masking unless --reveal).
-fn key_show(io: &mut Io<'_>, name: &str, reveal: bool, api: Option<&str>) -> u8 {
-    let info = match lexi_host::admin::api_key_info(name, api, reveal) {
-        Ok(info) => info,
-        Err(e) => return io.fail(e),
-    };
-    let mut lines = Vec::new();
-    let whose = match (api, info["own"].as_bool()) {
-        (Some(a), Some(false)) => format!("The {a} API uses {name}'s key. "),
-        _ => String::new(),
-    };
+/// One key's sources in order with what was found there, then the key
+/// (masked unless --reveal).
+fn one_key_lines(info: &Value, lines: &mut Vec<String>, indent: &str) {
     let sources = info["sources"].as_array().cloned().unwrap_or_default();
     if sources.is_empty() {
-        lines.push(format!("{whose}{name}'s api_key names no source."));
+        lines.push(format!("{indent}Its api_key names no source."));
     } else {
-        lines.push(format!("{whose}Looked for in this order:"));
+        lines.push(format!("{indent}Looked for in this order:"));
         for (i, s) in sources.iter().enumerate() {
             let note = s["note"]
                 .as_str()
@@ -332,7 +481,7 @@ fn key_show(io: &mut Io<'_>, name: &str, reveal: bool, api: Option<&str>) -> u8 
                 ""
             };
             lines.push(format!(
-                "  {}. {}{saved} — {}{note}",
+                "{indent}  {}. {}{saved} — {}{note}",
                 i + 1,
                 scalar(s.get("from")),
                 scalar(s.get("state"))
@@ -340,24 +489,56 @@ fn key_show(io: &mut Io<'_>, name: &str, reveal: bool, api: Option<&str>) -> u8 
         }
     }
     match (info["key"].as_str(), info["error"].as_str()) {
-        (_, Some(err)) => lines.push(format!("No API key: {err}")),
-        (Some(key), None) => lines.push(format!("Key: {key}")),
-        (None, None) => lines.push(format!("No API key configured for {name}.")),
+        (_, Some(err)) => lines.push(format!("{indent}No API key: {err}")),
+        (Some(key), None) => lines.push(format!("{indent}Key: {key}")),
+        (None, None) => lines.push(format!("{indent}No API key found.")),
+    }
+}
+
+/// A key's sources and key — or, with none named, every key's, and the
+/// variable (§12.5).
+fn key_show(io: &mut Io<'_>, target: &str, reveal: bool) -> u8 {
+    let info = match lexi_host::admin::api_key_info(target, reveal) {
+        Ok(info) => info,
+        Err(e) => return io.fail(e),
+    };
+    let mut lines = Vec::new();
+    if target.contains('#') {
+        one_key_lines(&info, &mut lines, "");
+        return io.result(lines.join("\n"), info);
+    }
+    let provider = scalar(info.get("provider"));
+    let keys = info["keys"].as_array().cloned().unwrap_or_default();
+    if keys.is_empty() {
+        lines.push(format!(
+            "{provider} has no keys. Add one with `lexi providers api-key set {provider}#NAME`."
+        ));
+    }
+    for k in &keys {
+        let star = if k["default"] == true { " ★" } else { "" };
+        lines.push(format!(
+            "{}{star}",
+            written(&provider, &scalar(k.get("key_name")))
+        ));
+        one_key_lines(k, &mut lines, "  ");
+    }
+    if let Some(l) = variable_line(&info) {
+        lines.push(l);
     }
     io.result(lines.join("\n"), info)
 }
 
-fn key_remove(io: &mut Io<'_>, provider: &str, name: &str, api: Option<&str>) -> u8 {
+fn key_remove(io: &mut Io<'_>, provider: &str, target: &str) -> u8 {
     if let Err(code) = provider_cfg(io, provider) {
         return code;
     }
-    match lexi_host::config::remove_api_key(name, api) {
+    match lexi_host::config::remove_api_key(target) {
         Ok(true) => io.result(
-            format!("Removed the saved API key for {name}."),
+            format!("Removed the saved API key for {target}."),
             json!({ "removed": true }),
         ),
         Ok(false) => io.result(
-            format!("No saved API key for {name}."),
+            format!("No saved API key for {target}."),
             json!({ "removed": false }),
         ),
         Err(e) => io.fail(e),
@@ -382,28 +563,62 @@ fn source_value(arg: &KeySourceArg) -> Result<Value, String> {
 }
 
 /// The sources as numbered lines.
-fn sources_text(list: &Value) -> String {
-    let rows = list["sources"].as_array().cloned().unwrap_or_default();
-    let mut lines = vec!["Looked for in this order:".to_string()];
+fn sources_lines(rows: &[Value], lines: &mut Vec<String>, indent: &str) {
+    lines.push(format!("{indent}Looked for in this order:"));
     for (i, r) in rows.iter().enumerate() {
         let what = match r["kind"].as_str() {
             Some("saved") if r["implicit"] == true => " (saved key; last unless api_key places it)",
             Some("saved") => " (saved key)",
             _ => "",
         };
-        lines.push(format!("  {}. {}{what}", i + 1, scalar(r.get("from"))));
+        lines.push(format!(
+            "{indent}  {}. {}{what}",
+            i + 1,
+            scalar(r.get("from"))
+        ));
+    }
+}
+
+fn sources_text(list: &Value) -> String {
+    let mut lines = Vec::new();
+    if let Some(keys) = list["keys"].as_array() {
+        let provider = scalar(list.get("provider"));
+        if keys.is_empty() {
+            lines.push(format!("{provider} has no keys."));
+        }
+        for k in keys {
+            let star = if k["default"] == true { " ★" } else { "" };
+            lines.push(format!(
+                "{}{star}",
+                written(&provider, &scalar(k.get("key_name")))
+            ));
+            sources_lines(
+                k["sources"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                &mut lines,
+                "  ",
+            );
+        }
+        if let Some(l) = variable_line(list) {
+            lines.push(l);
+        }
+    } else {
+        sources_lines(
+            list["sources"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+            &mut lines,
+            "",
+        );
     }
     lines.join("\n")
 }
 
 fn key_sources(io: &mut Io<'_>, cmd: KeySourceCmd) -> u8 {
     match cmd {
-        KeySourceCmd::List { name, api, key } => {
-            let name = match key_arg(io, &name, key.as_deref()) {
-                Ok((_, arg)) => arg,
+        KeySourceCmd::List { name, key } => {
+            let target = match key_target(io, &name, key.as_deref()) {
+                Ok((_, t)) => t,
                 Err(code) => return code,
             };
-            match lexi_host::config::key_source_list(&name, api.as_deref()) {
+            match lexi_host::config::key_source_list(&target) {
                 Ok(list) => io.result(sources_text(&list), list),
                 Err(e) => io.fail(e),
             }
@@ -412,47 +627,41 @@ fn key_sources(io: &mut Io<'_>, cmd: KeySourceCmd) -> u8 {
             name,
             source,
             first,
-            api,
             key,
         } => {
-            let name = match key_arg(io, &name, key.as_deref()) {
-                Ok((_, arg)) => arg,
+            let target = match key_target(io, &name, key.as_deref()) {
+                Ok((_, t)) => t,
                 Err(code) => return code,
             };
             let value = match source_value(&source) {
                 Ok(v) => v,
                 Err(e) => return io.fail(e),
             };
-            match lexi_host::config::add_key_source(&name, api.as_deref(), &value, first) {
+            match lexi_host::config::add_key_source(&target, &value, first) {
                 Ok(list) => io.result(
-                    format!("Updated {name}'s api_key.\n{}", sources_text(&list)),
+                    format!("Updated {target}'s api_key.\n{}", sources_text(&list)),
                     list,
                 ),
                 Err(e) => io.fail(e),
             }
         }
-        KeySourceCmd::Rm {
-            name,
-            source,
-            api,
-            key,
-        } => {
-            let name = match key_arg(io, &name, key.as_deref()) {
-                Ok((_, arg)) => arg,
+        KeySourceCmd::Rm { name, source, key } => {
+            let target = match key_target(io, &name, key.as_deref()) {
+                Ok((_, t)) => t,
                 Err(code) => return code,
             };
             let value = match source_value(&source) {
                 Ok(v) => v,
                 Err(e) => return io.fail(e),
             };
-            match lexi_host::config::remove_key_source(&name, api.as_deref(), &value) {
+            match lexi_host::config::remove_key_source(&target, &value) {
                 Ok(removed) => {
                     let msg = if removed {
-                        format!("Removed it from {name}'s api_key.")
+                        format!("Removed it from {target}'s api_key.")
                     } else {
-                        format!("{name}'s api_key doesn't list it.")
+                        format!("{target}'s api_key doesn't list it.")
                     };
-                    io.result(msg, json!({ "provider": name, "removed": removed }))
+                    io.result(msg, json!({ "provider": target, "removed": removed }))
                 }
                 Err(e) => io.fail(e),
             }
