@@ -26,6 +26,12 @@ go under **Unreleased**; at release time that heading becomes the version
 - **No more separate keys for one API or model.** A key covers every API of the provider (chat, images, embeddings). An API's or a model's own key, if you had one, becomes one of the provider's named keys (`#image-generations`), used when a request names it. Lexi says so once. `--api` is gone from the key commands, and `providers add --api-key` now takes `--key-name`.
 - Lexi 0.3.0 ignores named keys and reads only a key saved before names existed.
 
+### Desktop app
+- **One tab per key.** On the Providers tab, API Key Management has a tab for each of a provider's keys: its unnamed key (`default`) and each named key. **+ Add Key** adds another account's key (and saves it, if you paste it), and a named key can be renamed, deleted, or made the one requests use when they name none (★).
+- **Edit where a key is looked for.** Each key lists the places Lexi looks for it, in order. **Add Source…** adds an environment variable, a file or a command (a password manager, say), first or last, and **Remove** takes one out of the list. Nothing is deleted from it.
+- **Two accounts side by side.** In Chat and Images, a provider with named keys gets a column for each key that has one, such as `openai` and `openai#work`, so the same prompt can go to both. The **>_** help writes the same `openai#work`.
+- **Opened from Finder?** Apps opened from Finder or the Dock don't see variables set in `~/.zshrc`. When a key would come from such a variable, the key panel and the Setup Wizard say so and suggest saving the key instead.
+
 ### Models
 - **See how a provider's model list is fetched.** `lexi models hosted <provider> --schema` (Python: `lexi.models.hosted_schema`) shows the address Lexi asks and the catalog settings it uses: paging, the fields shown, and the rules that turn the listing into tags and limits. It also says whether they come from the provider's template or your providers-config.yaml. Nothing is fetched.
 

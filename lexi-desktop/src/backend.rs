@@ -24,6 +24,7 @@ pub async fn handle(method: &str, path: &str, body: Option<Value>) -> Result<Val
         ("GET", "/api/startup") => startup(path),
         ("POST", "/api/startup/seen") => startup_seen(),
         ("POST", "/api/providers/api-key") => provider_api_key(body.unwrap_or(Value::Null)),
+        ("POST", "/api/providers/keys") => provider_keys(body.unwrap_or(Value::Null)),
         ("POST", "/api/providers/check") => provider_check(body.unwrap_or(Value::Null)).await,
         ("POST", "/api/open-url") => open_url(body.unwrap_or(Value::Null)),
         ("GET", "/api/prompts") => prompts_list(),
@@ -106,10 +107,54 @@ fn providers() -> Result<Value, String> {
             "api_key": if has_key { "[set]" } else { "[missing]" },
             "configured": configured,
             "chat": chat,
+            "keys": named_keys(name, meta),
             "source": "providers-config.yaml",
         }));
     }
     Ok(json!({ "providers": out, "source": "providers-config.yaml" }))
+}
+
+/// A provider's keys for the Chat and Images columns, when it has named ones
+/// (`config::key_names`: the unnamed key first, each with where its key comes
+/// from; commands aren't run); `null` when it has only the unnamed key.
+fn named_keys(name: &str, meta: &Value) -> Value {
+    let has_named = meta
+        .get("keys")
+        .and_then(Value::as_object)
+        .is_some_and(|k| !k.is_empty());
+    if !has_named {
+        return Value::Null;
+    }
+    config::key_names(name).unwrap_or(Value::Null)
+}
+
+/// A provider column's name — `openai`, or `openai#work` for a named key — as
+/// the provider and the key it names (`default` for the unnamed one).
+fn split_column(name: &str) -> Result<(String, Option<String>), String> {
+    config::split_key_arg(name, None).map_err(|e| e.to_string())
+}
+
+/// A request's provider and key: `provider` may be `openai#work`, and `key`
+/// may name the key too (they must agree).
+fn provider_and_key(body: &Value) -> Result<(String, Option<String>), String> {
+    let provider = body
+        .get("provider")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "provider is required".to_string())?;
+    let key = body
+        .get("key")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty());
+    config::split_key_arg(provider, key).map_err(|e| e.to_string())
+}
+
+/// `provider#key` for the host's key functions (just `provider` for none).
+fn key_target(provider: &str, key: Option<&str>) -> String {
+    match key {
+        Some(k) => format!("{provider}#{k}"),
+        None => provider.to_string(),
+    }
 }
 
 /// `GET /api/providers/config-source` — the text of `providers-config.yaml`
@@ -565,29 +610,26 @@ fn unseen_notes(text: &str, seen: Option<&str>, current: &str) -> Vec<Value> {
         .collect()
 }
 
-/// One provider's credential state for the startup screen, the API key panel
-/// and the setup wizard: its `api_key` sources in order and what each had
-/// (`sources`, the saved key among them), the one the key came from
-/// (`source` kind, `from` place), the first environment variable it reads,
-/// where a saved key goes (`save_to`, `store`), and the template's `setup`
-/// help. Commands (`command:` sources) aren't run here.
-fn provider_credentials(name: &str) -> Value {
+/// One provider's (or one of its named keys') credential state for the
+/// startup screen, the API key panel and the setup wizard: its `api_key`
+/// sources in order and what each had (`sources`, the saved key among them,
+/// each with the `value` that names it in providers-config.yaml), the one the
+/// key came from (`source` kind, `from` place), the first environment
+/// variable it reads, where a saved key goes (`save_to`, `store`), and the
+/// template's `setup` help. `key` names a named key (`None`: the unnamed
+/// one). Commands (`command:` sources) aren't run here.
+fn provider_credentials(name: &str, key: Option<&str>) -> Value {
     let cfg = lexi_host::admin::provider_config(name).unwrap_or(Value::Null);
-    let target = panel_key(name);
     let setup = cfg.get("setup").cloned().unwrap_or(Value::Null);
+    let target = key_target(name, key);
     let mut out = json!({
         "name": name,
+        "key_name": key.filter(|k| *k != config::DEFAULT_KEY),
         "display": setup.get("name").and_then(Value::as_str).unwrap_or(name),
         "setup": setup,
         "url": cfg.get("url"),
     });
-    let info = match &target {
-        Some(t) => lexi_host::admin::api_key_info(t, false),
-        None => Err(lexi_host::HostError::MissingApiKey(format!(
-            "{name} has no key: add one with `lexi providers api-key set {name}#NAME`"
-        ))),
-    };
-    match info {
+    match lexi_host::admin::api_key_info(&target, None, false) {
         Ok(info) => {
             let env = info.get("env").and_then(Value::as_str);
             for k in [
@@ -598,6 +640,7 @@ fn provider_credentials(name: &str) -> Value {
             out["env"] = json!(env);
             out["env_set"] =
                 json!(env.is_some_and(|v| std::env::var(v).is_ok_and(|s| !s.is_empty())));
+            add_source_values(&mut out, &target);
         }
         Err(e) => {
             out["source"] = Value::Null;
@@ -605,6 +648,46 @@ fn provider_credentials(name: &str) -> Value {
         }
     }
     out
+}
+
+/// Give each of `creds`' sources the `value` that names it (what removing it
+/// takes) and `implicit` for a saved key the list doesn't place, from
+/// `config::key_source_list` (the same list, in the same order).
+fn add_source_values(creds: &mut Value, target: &str) {
+    let Ok(listed) = config::key_source_list(target, None) else {
+        return;
+    };
+    let (Some(rows), Some(sources)) = (
+        listed["sources"].as_array(),
+        creds["sources"].as_array_mut(),
+    ) else {
+        return;
+    };
+    if rows.len() != sources.len() {
+        return;
+    }
+    for (src, row) in sources.iter_mut().zip(rows) {
+        if src["kind"] == row["kind"] {
+            src["value"] = row["value"].clone();
+            if row.get("implicit") == Some(&Value::Bool(true)) {
+                src["implicit"] = Value::Bool(true);
+            }
+        }
+    }
+}
+
+/// Whether the app was opened from Finder or the Dock (macOS: started by
+/// `launchd`, with no terminal), so it doesn't see variables set in a shell
+/// profile such as `~/.zshrc`.
+fn opened_from_finder() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        std::os::unix::process::parent_id() == 1 && std::env::var_os("TERM").is_none()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
 }
 
 /// `GET /api/startup` — what the startup screen needs: this version and the
@@ -618,7 +701,10 @@ fn startup(path: &str) -> Result<Value, String> {
     let names = config::load_providers()
         .map(|p| config::provider_names(&p))
         .map_err(|e| e.to_string())?;
-    let providers: Vec<Value> = names.iter().map(|n| provider_credentials(n)).collect();
+    let providers: Vec<Value> = names
+        .iter()
+        .map(|n| provider_credentials(n, None))
+        .collect();
     let has_credentials = providers.iter().any(|p| !p["source"].is_null());
     let new_version = seen != Some(APP_VERSION);
     let notes = if about {
@@ -636,6 +722,7 @@ fn startup(path: &str) -> Result<Value, String> {
         "providers": providers,
         "has_credentials": has_credentials,
         "platform": std::env::consts::OS,
+        "opened_from_finder": opened_from_finder(),
         "notices": lexi_host::take_notices(),
     }))
 }
@@ -648,48 +735,32 @@ fn startup_seen() -> Result<Value, String> {
     Ok(json!({ "seen_version": APP_VERSION }))
 }
 
-/// The key the API key panel and the wizard work on until they show every
-/// key (`docs/key-storage-design.md` §12.6): the provider's default key, else
-/// its first; `None` when it has none (written `provider#key`).
-fn panel_key(provider: &str) -> Option<String> {
-    let keys = config::key_names(provider).ok()?;
-    let name = keys["default_key"]
-        .as_str()
-        .map(String::from)
-        .or_else(|| keys["keys"][0]["name"].as_str().map(String::from))?;
-    Some(format!("{provider}#{name}"))
-}
-
-/// The key a panel action works on, or the "add a key" refusal.
-fn panel_target(provider: &str) -> Result<String, String> {
-    panel_key(provider).ok_or_else(|| {
-        format!(
-            "{provider} has no key yet: add one with `lexi providers api-key set {provider}#NAME` (the app's key screen names keys soon)"
-        )
-    })
-}
-
-/// `POST /api/providers/api-key` `{action: show|set|remove, provider,
-/// reveal?, value?}` — a provider's API key: `set` saves it as the saved key
-/// (in the OS key store, else the provider's owner-only key file; listed
-/// sources are never written),
-/// `remove` deletes the saved one. Every action answers with the
-/// provider's credentials afterwards (plus `location`/`added`/`used`, or
-/// `removed`).
+/// `POST /api/providers/api-key` `{action, provider, key?, …}` — a
+/// provider's API key, or (with `key`, or `provider` as `openai#work`) one of
+/// its named keys':
+/// - `show` (`reveal?`): its credentials;
+/// - `set` (`value`): save it as the saved key (in the OS key store, else an
+///   owner-only key file; listed sources are never written), creating the
+///   named key if it's new;
+/// - `remove`: delete the saved key;
+/// - `add_source` (`source`, `first?`) / `remove_source` (`source`): add or
+///   take out a place it's looked for in (`{env: VAR}`, `{file: PATH}`,
+///   `{command: [...]}` or `"saved"`).
+///
+/// Every action answers with the credentials afterwards (plus
+/// `location`/`added`/`used`, `removed`, or `listed`).
 fn provider_api_key(body: Value) -> Result<Value, String> {
-    let provider = body
-        .get("provider")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "provider is required".to_string())?;
-    lexi_host::admin::provider_config(provider).map_err(|e| e.to_string())?;
+    let (provider, key) = provider_and_key(&body)?;
+    lexi_host::admin::provider_config(&provider).map_err(|e| e.to_string())?;
+    let target = key_target(&provider, key.as_deref());
     let action = body.get("action").and_then(Value::as_str).unwrap_or("show");
+    let source = || source_arg(body.get("source"));
     let mut result = json!({});
     match action {
         "show" => {
-            let mut creds = provider_credentials(provider);
+            let mut creds = provider_credentials(&provider, key.as_deref());
             if body.get("reveal").and_then(Value::as_bool) == Some(true) {
-                let info = lexi_host::admin::api_key_info(&panel_target(provider)?, true)
+                let info = lexi_host::admin::api_key_info(&target, None, true)
                     .map_err(|e| e.to_string())?;
                 creds["key"] = info["key"].clone();
             }
@@ -697,22 +768,80 @@ fn provider_api_key(body: Value) -> Result<Value, String> {
         }
         "set" => {
             let value = body.get("value").and_then(Value::as_str).unwrap_or("");
-            let saved =
-                config::set_api_key(&panel_target(provider)?, value).map_err(|e| e.to_string())?;
+            let saved = config::set_api_key(&target, None, value).map_err(|e| e.to_string())?;
             result = saved_value(&saved);
         }
         "remove" => {
-            let removed =
-                config::remove_api_key(&panel_target(provider)?).map_err(|e| e.to_string())?;
+            let removed = config::remove_api_key(&target, None).map_err(|e| e.to_string())?;
             result["removed"] = json!(removed);
+        }
+        "add_source" => {
+            let first = body.get("first").and_then(Value::as_bool) == Some(true);
+            config::add_key_source(&target, None, &source()?, first).map_err(|e| e.to_string())?;
+        }
+        "remove_source" => {
+            let listed =
+                config::remove_key_source(&target, None, &source()?).map_err(|e| e.to_string())?;
+            result["listed"] = json!(listed);
         }
         other => return Err(format!("unknown api-key action {other:?}")),
     }
-    let mut creds = provider_credentials(provider);
+    let mut creds = provider_credentials(&provider, key.as_deref());
     if let (Some(c), Some(r)) = (creds.as_object_mut(), result.as_object()) {
         c.extend(r.clone());
     }
     Ok(creds)
+}
+
+/// A source from the key panel: as `api_key` writes it, except that a
+/// command may be one line (`{command: "op read …"}`), split like a shell
+/// would (as the CLI's `--command`).
+fn source_arg(source: Option<&Value>) -> Result<Value, String> {
+    match source {
+        None | Some(Value::Null) => Err("source is required".into()),
+        Some(Value::Object(o)) if o.len() == 1 => match o.get("command") {
+            Some(Value::String(line)) => match shlex::split(line) {
+                Some(argv) if !argv.is_empty() => Ok(json!({ "command": argv })),
+                _ => Err(format!(
+                    "can't read the command {line:?} (check its quotes)"
+                )),
+            },
+            _ => Ok(Value::Object(o.clone())),
+        },
+        Some(v) => Ok(v.clone()),
+    }
+}
+
+/// `POST /api/providers/keys` `{action, provider, name?, new_name?}` — a
+/// provider's named keys: `list`, `add` (`name`), `rename` (`name` →
+/// `new_name`), `remove` (`name`, with its saved key) and `default` (`name`,
+/// or none / `default` for the unnamed key: the key requests use when they
+/// don't name one). Answers with the keys afterwards (`config::key_names`).
+fn provider_keys(body: Value) -> Result<Value, String> {
+    let provider = require_field(&body, "provider")?;
+    let action = body.get("action").and_then(Value::as_str).unwrap_or("list");
+    let name = || require_field(&body, "name");
+    let err = |e: lexi_host::HostError| e.to_string();
+    match action {
+        "list" => {}
+        "add" => {
+            config::add_named_key(&provider, &name()?).map_err(err)?;
+        }
+        "rename" => {
+            let new = require_field(&body, "new_name")?;
+            config::rename_named_key(&provider, &name()?, &new).map_err(err)?;
+        }
+        "remove" => config::remove_named_key(&provider, &name()?).map_err(err)?,
+        "default" => {
+            let name = body
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty());
+            config::set_default_key(&provider, name).map_err(err)?;
+        }
+        other => return Err(format!("unknown keys action {other:?}")),
+    }
+    config::key_names(&provider).map_err(err)
 }
 
 fn saved_value(saved: &config::SavedKey) -> Value {
@@ -723,19 +852,17 @@ fn saved_value(saved: &config::SavedKey) -> Value {
     })
 }
 
-/// `POST /api/providers/check` `{provider}` — test the provider's key against
-/// its models endpoint (a listing; nothing is generated or billed).
+/// `POST /api/providers/check` `{provider, key?}` — test the provider's key
+/// (or its named key's: `key`, or `provider` as `openai#work`) against its
+/// models endpoint (a listing; nothing is generated or billed).
 async fn provider_check(body: Value) -> Result<Value, String> {
-    let provider = body
-        .get("provider")
-        .and_then(Value::as_str)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "provider is required".to_string())?;
-    let st = lexi_host::check_api_key(provider)
+    let (provider, key) = provider_and_key(&body)?;
+    let label = key_target(&provider, key.as_deref());
+    let st = config::with_key(key, lexi_host::check_api_key(&provider))
         .await
         .map_err(|e| e.to_string())?;
     Ok(json!({
-        "provider": provider,
+        "provider": label,
         "status": st.status,
         "source": st.source,
         "from": st.from,
@@ -1020,21 +1147,28 @@ pub async fn stream(body: Value, on_event: tauri::ipc::Channel<String>) -> Resul
 
             let cb_ch = ch.clone();
             let p = provider.clone();
-            let result = lexi_host::respond_stream_text(
-                &provider,
-                prompt,
-                "user",
-                model.as_deref(),
-                &[],
-                move |frag| {
-                    let _ = cb_ch.send(sse("delta", json!({ "provider": p, "text": frag })));
-                },
-            )
-            .await;
+            // A column may be a named key: `openai#work`.
+            let result = match split_column(&provider) {
+                Ok((name, key)) => {
+                    let run = lexi_host::respond_stream_text(
+                        &name,
+                        prompt,
+                        "user",
+                        model.as_deref(),
+                        &[],
+                        move |frag| {
+                            let _ =
+                                cb_ch.send(sse("delta", json!({ "provider": p, "text": frag })));
+                        },
+                    );
+                    config::with_key(key, run).await.map_err(|e| e.to_string())
+                }
+                Err(e) => Err(e),
+            };
 
             let done = match result {
                 Ok(_) => json!({ "provider": provider }),
-                Err(e) => json!({ "provider": provider, "error": e.to_string() }),
+                Err(e) => json!({ "provider": provider, "error": e }),
             };
             let _ = ch.send(sse("provider_done", done));
         }
@@ -1074,7 +1208,13 @@ async fn respond(body: Value) -> Result<Value, String> {
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty());
         async move {
-            match lexi_host::respond_text(provider, prompt, "user", model, &[]).await {
+            // A column may be a named key: `openai#work`.
+            let (name, key) = match split_column(provider) {
+                Ok(v) => v,
+                Err(e) => return json!({ "provider": provider, "error": e }),
+            };
+            let run = lexi_host::respond_text(&name, prompt, "user", model, &[]);
+            match config::with_key(key, run).await {
                 Ok(r) => json!({ "provider": provider, "output": r.text, "stderr": "" }),
                 Err(e) => json!({ "provider": provider, "error": e.to_string() }),
             }
@@ -1117,18 +1257,22 @@ fn images_dir() -> std::path::PathBuf {
 /// images are saved to.
 fn images_providers() -> Result<Value, String> {
     let cfg = config::load_providers().map_err(|e| e.to_string())?;
-    let names: Vec<String> = cfg
+    let empty = Map::new();
+    let entries = cfg
         .get("providers")
         .and_then(Value::as_object)
-        .map(|m| m.keys().cloned().collect())
-        .unwrap_or_default();
-    let providers: Vec<Value> = names
+        .unwrap_or(&empty);
+    let providers: Vec<Value> = entries
         .iter()
         .map(
-            |name| match lexi_host::resolve_model(name, None, Some("image")) {
-                Ok(r) => {
-                    json!({ "name": name, "images": true, "default_model": r.model, "api": r.api })
-                }
+            |(name, meta)| match lexi_host::resolve_model(name, None, Some("image")) {
+                Ok(r) => json!({
+                    "name": name,
+                    "images": true,
+                    "default_model": r.model,
+                    "api": r.api,
+                    "keys": named_keys(name, meta),
+                }),
                 Err(e) => json!({ "name": name, "images": false, "reason": e.to_string() }),
             },
         )
@@ -1199,8 +1343,16 @@ fn images_options(path: &str) -> Result<Value, String> {
 /// Generates, saves each image to the images folder, and returns them with
 /// their data inline (`data_url`) for the page to show.
 async fn images_generate(body: Value) -> Result<Value, String> {
-    use base64::prelude::*;
+    // The provider may be a named key's column, `openai#work`.
     let provider = require_field(&body, "provider")?;
+    let (_, key) = split_column(&provider)?;
+    Box::pin(config::with_key(key, generate_images(provider, body))).await
+}
+
+/// [`images_generate`] for one provider column, inside its key's scope.
+async fn generate_images(provider: String, body: Value) -> Result<Value, String> {
+    use base64::prelude::*;
+    let (name, _) = split_column(&provider)?;
     let prompt = require_field(&body, "prompt")?;
     let model = body
         .get("model")
@@ -1224,7 +1376,7 @@ async fn images_generate(body: Value) -> Result<Value, String> {
         set_paths,
         ..Default::default()
     };
-    let chat = lexi_host::prepare_chat(&provider, &req, lexi_host::ChatMode::Buffered)
+    let chat = lexi_host::prepare_chat(&name, &req, lexi_host::ChatMode::Buffered)
         .map_err(|e| e.to_string())?;
     let res = lexi_host::run_chat(&chat, |_| {})
         .await
@@ -1853,5 +2005,222 @@ pub(crate) mod tests {
         )
         .await
         .is_err());
+    }
+
+    /// Named keys in the app: the key panel adds, saves, renames and removes
+    /// them and edits their sources; a Chat column `p#work` is billed to that
+    /// key, and Test checks the key it names.
+    #[tokio::test]
+    async fn named_keys_from_the_key_panel_to_a_chat_column() {
+        let _env = ENV_LOCK.lock().await;
+        use serde_json::json;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        for (key, who) in [("sk-main", "main"), ("sk-work", "work")] {
+            let bearer = format!("Bearer {key}");
+            Mock::given(method("POST"))
+                .and(path("/v1/chat/completions"))
+                .and(header("authorization", bearer.as_str()))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{ "message": { "role": "assistant", "content": format!("billed to {who}") } }]
+                })))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/v1/models"))
+                .and(header("authorization", bearer.as_str()))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [] })))
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("LEXI_HOME", home.path());
+        // Never the real keychain.
+        std::env::set_var("LEXI_KEY_STORE", "file");
+        std::fs::create_dir_all(home.path().join("providers")).unwrap();
+        std::fs::write(
+            home.path().join("providers/providers-config.yaml"),
+            format!(
+                "providers:\n  p:\n    url: {}/v1\n    api: chat-completions\n    api_key: []\n    default_model: m\n",
+                server.uri()
+            ),
+        )
+        .unwrap();
+        let call =
+            |path: &'static str, body: serde_json::Value| super::handle("POST", path, Some(body));
+
+        // Only the unnamed key: the columns don't list keys.
+        let list = super::handle("GET", "/api/providers", None).await.unwrap();
+        assert!(list["providers"][0]["keys"].is_null());
+
+        call(
+            "/api/providers/api-key",
+            json!({ "action": "set", "provider": "p", "value": "sk-main" }),
+        )
+        .await
+        .unwrap();
+        let keys = call(
+            "/api/providers/keys",
+            json!({ "action": "add", "provider": "p", "name": "work" }),
+        )
+        .await
+        .unwrap();
+        let names: Vec<&str> = keys["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| k["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["default", "work"]);
+        assert!(keys["keys"][1]["source"].is_null());
+        let saved = call(
+            "/api/providers/api-key",
+            json!({ "action": "set", "provider": "p", "key": "work", "value": "sk-work" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(saved["key_name"], "work");
+        assert_eq!(saved["location"], "providers/p/keys/work");
+
+        // The provider list now gives the columns its keys.
+        let list = super::handle("GET", "/api/providers", None).await.unwrap();
+        let cols: Vec<(&str, &str)> = list["providers"][0]["keys"]["keys"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|k| (k["name"].as_str().unwrap(), k["source"].as_str().unwrap()))
+            .collect();
+        assert_eq!(cols, [("default", "saved"), ("work", "saved")]);
+
+        // One prompt to both accounts, side by side.
+        let res = call(
+            "/api/respond",
+            json!({ "prompt": "hi", "providers": ["p", "p#work"] }),
+        )
+        .await
+        .unwrap();
+        let out: Vec<(&str, &str)> = res["responses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["provider"].as_str().unwrap(),
+                    r["output"].as_str().unwrap_or(""),
+                )
+            })
+            .collect();
+        assert_eq!(out, [("p", "billed to main"), ("p#work", "billed to work")]);
+        let bad = call(
+            "/api/respond",
+            json!({ "prompt": "hi", "providers": ["p#nope"] }),
+        )
+        .await
+        .unwrap();
+        assert!(bad["responses"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("nope"));
+
+        // Test asks with the key it names.
+        let check = call("/api/providers/check", json!({ "provider": "p#work" }))
+            .await
+            .unwrap();
+        assert_eq!(
+            (check["provider"].as_str(), check["verified"].as_bool()),
+            (Some("p#work"), Some(true))
+        );
+
+        // Sources: a variable looked in first, then taken out again.
+        let added = call(
+            "/api/providers/api-key",
+            json!({ "action": "add_source", "provider": "p#work", "source": { "env": "LEXI_TEST_UNSET_WORK_KEY" }, "first": true }),
+        )
+        .await
+        .unwrap();
+        let src = &added["sources"];
+        assert_eq!(src[0]["kind"], "env");
+        assert_eq!(
+            src[0]["value"],
+            json!({ "env": "LEXI_TEST_UNSET_WORK_KEY" })
+        );
+        assert_eq!(src[1]["kind"], "saved");
+        assert_eq!(src[1]["implicit"], true);
+        assert_eq!(added["source"], "saved");
+        let removed = call(
+            "/api/providers/api-key",
+            json!({ "action": "remove_source", "provider": "p", "key": "work", "source": { "env": "LEXI_TEST_UNSET_WORK_KEY" } }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(removed["listed"], true);
+        assert_eq!(removed["sources"].as_array().unwrap().len(), 1);
+        // A command is one line, split like a shell would; it isn't run here.
+        let cmd = json!({ "command": "op read 'op://Private/Work key'" });
+        let added = call(
+            "/api/providers/api-key",
+            json!({ "action": "add_source", "provider": "p#work", "source": cmd }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            added["sources"][0]["value"],
+            json!({ "command": ["op", "read", "op://Private/Work key"] })
+        );
+        assert_eq!(added["sources"][0]["state"], "not run");
+        let removed = call(
+            "/api/providers/api-key",
+            json!({ "action": "remove_source", "provider": "p#work", "source": cmd }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(removed["listed"], true);
+        // Naming the key two different ways is refused.
+        assert!(call(
+            "/api/providers/api-key",
+            json!({ "action": "show", "provider": "p#work", "key": "home" })
+        )
+        .await
+        .is_err());
+
+        // The default, a rename (the default follows), and removal.
+        let keys = call(
+            "/api/providers/keys",
+            json!({ "action": "default", "provider": "p", "name": "work" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(keys["default_key"], "work");
+        let res = call(
+            "/api/respond",
+            json!({ "prompt": "hi", "providers": ["p"] }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res["responses"][0]["output"], "billed to work");
+        let keys = call(
+            "/api/providers/keys",
+            json!({ "action": "rename", "provider": "p", "name": "work", "new_name": "biz" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(keys["default_key"], "biz");
+        assert_eq!(keys["keys"][1]["source"], "saved");
+        let keys = call(
+            "/api/providers/keys",
+            json!({ "action": "remove", "provider": "p", "name": "biz" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(keys["default_key"], "default");
+        assert_eq!(keys["keys"].as_array().unwrap().len(), 1);
     }
 }
