@@ -366,6 +366,13 @@ pub async fn check_api_key(provider: &str) -> Result<KeyStatus, HostError> {
         }) => ("invalid api-key", false),
         Err(_) => ("ready", false),
     };
+    // Remember it: the key list says whether a key was tested, and how it went.
+    let result = match (status, verified) {
+        (_, true) => "ok",
+        ("invalid api-key", _) => "rejected",
+        _ => "failed",
+    };
+    config::record_key_check(provider, &key, result, &api_key);
     Ok(KeyStatus {
         status,
         key: Some(key),

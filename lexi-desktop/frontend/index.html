@@ -810,6 +810,7 @@
     .key-state { font-size: 0.84rem; color: var(--muted); }
     .key-state.ok { color: var(--success); }
     .key-state.bad { color: var(--danger); }
+    .key-state.warn { color: var(--warning, #f59e0b); }
     .key-default-badge { font-size: 0.82rem; font-weight: 600; color: var(--accent-2); padding: 0 6px; }
     .btn.btn-sm { padding: 4px 10px; font-size: 0.82rem; }
     .icon-btn {
@@ -859,6 +860,8 @@
       color: var(--text);
       font-size: 1rem;
     }
+    .badge-unverified { opacity: 0.8; }
+    .provider-need { font-size: 0.84rem; }
     .provider-unconfigured {
       opacity: 0.6;
     }
@@ -2907,6 +2910,40 @@
       }
     }
 
+    // A provider's keys in a few words: `#work ★, #`, and the variable.
+    function keysSummaryHtml(p) {
+      const info = p.keys;
+      if (!info || !Array.isArray(info.keys)) return escapeHtml(p.api_key || '');
+      const parts = info.keys.map((k) => `<code>${esc(k.label)}</code>${k.default ? ' ★' : ''}`);
+      if (info.variable && info.variable.set) parts.push(`<code>$${esc(info.variable.name)}</code>`);
+      return parts.length ? parts.join(', ') : '<span class="muted">none</span>';
+    }
+
+    // A provider's status: Verified (one of its keys passed a test), Ready
+    // (a request that names no key has one, and the provider has its URL and
+    // a default model), else Not ready with what's needed.
+    function providerStatus(p) {
+      const info = p.keys || {};
+      const keys = Array.isArray(info.keys) ? info.keys : [];
+      const verified = keys.filter((k) => k.check && k.check.status === 'ok').map((k) => `${p.name}${k.label}`);
+      if (info.variable && info.variable.check && info.variable.check.status === 'ok') verified.push(`$${info.variable.name}`);
+      const need = [];
+      if (!p.url) need.push('No URL');
+      if (!p.default_model) need.push('No default model');
+      if (info.ready === false) {
+        need.push({ 'no key': 'Add an API key', 'no default key': 'Choose a default key', 'no key found': "The default key wasn't found" }[info.reason] || 'Needs a key');
+      } else if (!p.keys && p.api_key === '[missing]') {
+        need.push('Add an API key');
+      }
+      if (need.length) {
+        return { cls: 'badge-incomplete', label: 'Not ready', need: need.join(' · '), tip: `${p.name} can't take a request that names no key yet: ${need.join(', ')}.` };
+      }
+      if (verified.length) {
+        return { cls: 'badge-ready', label: 'Verified', tip: `Ready, and ${p.name} accepted ${verified.join(', ')} when tested.` };
+      }
+      return { cls: 'badge-ready badge-unverified', label: 'Ready', tip: `Everything is set up. None of ${p.name}'s keys has been tested yet: test one on API Keys below.` };
+    }
+
     function renderProvidersTable(items, source) {
       if (!items.length) {
         providerTableEl.innerHTML = '<div class="muted">No providers found.</div>';
@@ -2915,18 +2952,17 @@
       const table = document.createElement('table');
       table.className = 'data-table';
       const thead = document.createElement('thead');
-      thead.innerHTML = `<tr><th>Name</th><th>URL</th><th>API Key</th><th>Status</th></tr>`;
+      thead.innerHTML = `<tr><th>Name</th><th>URL</th><th>API Keys</th><th>Status</th></tr>`;
       table.appendChild(thead);
       const tbody = document.createElement('tbody');
       items.forEach((p) => {
         const tr = document.createElement('tr');
-        const statusBadge = p.configured
-          ? '<span class="badge-ready">Ready</span>'
-          : '<span class="badge-incomplete">Incomplete</span>';
+        const st = providerStatus(p);
+        const statusBadge = `<span class="${st.cls}" data-tip="${esc(st.tip)}">${esc(st.label)}</span>${st.need ? ` <span class="muted provider-need">${esc(st.need)}</span>` : ''}`;
         tr.innerHTML = `
           <td>${escapeHtml(p.name)}</td>
           <td>${escapeHtml(p.url || '')}</td>
-          <td>${escapeHtml(p.api_key || '')}</td>
+          <td>${keysSummaryHtml(p)}</td>
           <td>${statusBadge}</td>
         `;
         tbody.appendChild(tr);
@@ -3854,6 +3890,27 @@
       }
     }
 
+    // "5 minutes ago" for a time in seconds since 1970.
+    function ago(secs) {
+      const d = Math.max(0, Date.now() / 1000 - secs);
+      if (d < 60) return 'just now';
+      const [n, unit] = d < 3600 ? [Math.round(d / 60), 'minute'] : d < 86400 ? [Math.round(d / 3600), 'hour'] : [Math.round(d / 86400), 'day'];
+      return `${n} ${unit}${n === 1 ? '' : 's'} ago`;
+    }
+
+    // A key's status: Found (it can be read), Tested ✓ (the provider accepted
+    // it), Rejected (it refused it), Failed (the test got no answer), No key
+    // yet, or Can't read it. A test is remembered until the key changes.
+    function keyStateHtml(provider, k) {
+      if (k.error) return `<span class="key-state bad" data-tip="${esc(k.error)}">Can't read it</span>`;
+      if (!k.source) return '<span class="key-state" data-tip="None of the places Lexi looks has a key: edit it to save one, or add a source">No key yet</span>';
+      const c = k.check;
+      if (c && c.status === 'ok') return `<span class="key-state ok" data-tip="${esc(provider)} accepted it ${esc(ago(c.at))}">Tested ✓</span>`;
+      if (c && c.status === 'rejected') return `<span class="key-state bad" data-tip="${esc(provider)} refused it ${esc(ago(c.at))}: check that you copied all of it, or create a new one">Rejected</span>`;
+      if (c && c.status === 'failed') return `<span class="key-state warn" data-tip="Lexi couldn't reach ${esc(provider)} to test it ${esc(ago(c.at))} (no connection, a timeout, or the provider had a problem). Test it again">Failed</span>`;
+      return '<span class="key-state found" data-tip="Lexi can read it; it hasn\'t been tested yet (test it with the pulse icon)">Found</span>';
+    }
+
     function renderKeyList(provider) {
       const keys = (apiKeyList && apiKeyList.keys) || [];
       if (!keys.length) {
@@ -3864,9 +3921,7 @@
       const several = keys.length > 1;
       const rows = keys.map((k) => {
         const unnamed = k.name === '';
-        const state = k.error ? `<span class="key-state bad" data-tip="${esc(k.error)}">Can't read it</span>`
-          : k.source ? '<span class="key-state ok">Key found</span>'
-            : '<span class="key-state">No key yet</span>';
+        const state = keyStateHtml(provider, k);
         const from = k.error ? '' : esc(k.from || '—');
         const def = k.default
           ? `<span class="key-default-badge" aria-label="The default key" data-tip="The default: requests that name no key use this one${apiKeyList.variable && apiKeyList.variable.set ? ` (when $${esc(apiKeyList.variable.name)} isn't set)` : ''}">★ Default</span>`
@@ -3951,6 +4006,8 @@
       } catch (err) {
         setStatus(err.message, 'error');
       }
+      // The result is remembered: show it in the list and the providers table.
+      fetchProvidersList();
     }
 
     // Add a key: its name, and (if you have it) the key, saved in one go.

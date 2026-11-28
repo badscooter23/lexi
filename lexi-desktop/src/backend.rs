@@ -2223,6 +2223,15 @@ pub(crate) mod tests {
             (check["provider"].as_str(), check["verified"].as_bool()),
             (Some("p#work"), Some(true))
         );
+        // ...and the list remembers it, until the key changes.
+        let keys = call(
+            "/api/providers/keys",
+            json!({ "action": "list", "provider": "p" }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(keys["keys"][1]["check"]["status"], "ok");
+        assert!(keys["keys"][0]["check"].is_null());
 
         // Sources: a variable looked in first, then taken out again.
         let added = call(

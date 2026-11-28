@@ -274,6 +274,35 @@ fn variable_line(v: &Value) -> Option<String> {
     })
 }
 
+/// A key's status for listings: `found`, `tested ✓ (5 minutes ago)`,
+/// `rejected (…)`, `failed (…)` (its last test), or nothing without a key.
+fn key_state(k: &Value) -> String {
+    if !k["error"].is_null() || k["source"].is_null() {
+        return String::new();
+    }
+    let ago = |c: &Value| {
+        let at = c["at"].as_u64().unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(at);
+        let d = now.saturating_sub(at);
+        let (n, unit) = match d {
+            0..=59 => return "just now".to_string(),
+            60..=3599 => (d / 60, "minute"),
+            3600..=86399 => (d / 3600, "hour"),
+            _ => (d / 86400, "day"),
+        };
+        format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" })
+    };
+    match k["check"]["status"].as_str() {
+        Some("ok") => format!("tested ✓ ({})", ago(&k["check"])),
+        Some("rejected") => format!("rejected ({})", ago(&k["check"])),
+        Some("failed") => format!("test failed ({})", ago(&k["check"])),
+        _ => "found".into(),
+    }
+}
+
 /// `openai's keys (★ = used when a request names none):` then one line per
 /// key — how it's written and where it comes from — then the variable, and
 /// what's not ready.
@@ -307,7 +336,11 @@ fn keys_text(v: &Value) -> String {
                 ""
             };
             let label = scalar(k.get("label"));
-            lines.push(format!("{mark} {label:width$}  {from}{old}"));
+            let state = match key_state(&k) {
+                s if s.is_empty() => s,
+                s => format!("  {s}"),
+            };
+            lines.push(format!("{mark} {label:width$}  {from}{state}{old}"));
         }
     }
     if let Some(l) = variable_line(v) {
