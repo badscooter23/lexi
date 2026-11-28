@@ -1,6 +1,6 @@
 # API Key Storage — Design
 
-**Status:** accepted · 2026-11-25 · steps 1 (source model), 2 (macOS store) and 3 (Windows and Linux stores) implemented
+**Status:** accepted · 2026-11-25 · steps 1 (source model), 2 (macOS store) and 3 (Windows and Linux stores) implemented · §11 named keys proposed
 **Scope:** where Lexi reads API keys from and where it saves them: the CLI, the
 Python library and the desktop app (all via `lexi-host`).
 **Replaces:** the 0.3.0 rule that a saved key goes into "the first file
@@ -283,7 +283,8 @@ then `set` on the old version restores them.
    migration step 2, and the locked-keychain message.
 3. **Windows and Linux stores.**
 4. **Desktop.** The API Key panel and wizard changes, and the Finder-launch
-   hint.
+   hint. Named keys (§11) come first, so this screen is built once with
+   them in it.
 
 Each step is its own PR with CHANGELOG notes.
 
@@ -316,3 +317,157 @@ Each step is its own PR with CHANGELOG notes.
   and breaks when they print or expect a terminal.
 - **Keeping both a file and a store copy.** Two copies drift, and the file
   undoes the protection.
+
+## 11. Addition: named keys (several accounts per provider)
+
+**Status:** proposed · 2026-11-28
+
+### 11.1 Problem
+
+A provider has exactly one key in use at a time. People with **separate
+accounts** at the same provider — work and personal, one per client, a team
+key and their own — want to choose which account a request is billed to.
+Today they can only add a second provider entry from the same template
+(`openai-work: {template: openai}`). That works, but it duplicates the
+provider's models, defaults and aliases, and makes one service look like
+two.
+
+### 11.2 Goals
+
+- Several **named keys** per provider, each with its own sources and its own
+  saved key, chosen **per request** or by a per-provider **default**.
+- Nothing changes for anyone with one key: today's `api_key` is the
+  provider's unnamed key.
+- The same in the CLI, Python and the desktop app.
+- **Non-goal:** switching keys automatically (on a rate limit, or when credit
+  runs out). That's a different feature: a named key is a choice of
+  account, not a pool.
+
+### 11.3 Config
+
+```yaml
+providers:
+  openai:
+    template: openai
+    api_key: [{env: OPENAI_API_KEY}]   # the unnamed key, as today
+    keys:
+      work:                            # a named key: its own sources...
+        api_key: [{command: [op, read, "op://Work/OpenAI/credential"]}]
+      personal: {}                     # ...or none: just its saved key
+    default_key: work                  # used when a request names no key
+```
+
+- **`keys`** maps a name to `{api_key?}`. `api_key` is an ordered list of
+  sources, exactly as in §4.1. The key's saved key (§4.3) comes after them,
+  unless the marker `saved` places it earlier. With no `api_key`, a named
+  key is its saved key alone.
+- **`default_key`** names the key used when none is asked for. When it's
+  absent, the unnamed key is used.
+- **Names:** letters, digits, `-` and `_`, up to 32 characters. `default`
+  is reserved: in commands it means the unnamed key.
+- A template never defines named keys. They're yours, in
+  providers-config.yaml.
+
+### 11.4 Which key a request uses
+
+1. The key the request names (`--key work`, `key="work"`, the desktop
+   app's picker). An unknown name is an error that lists the provider's
+   keys.
+2. Otherwise, as today: a configured model's own `api_key`, then an API
+   binding's own `api_key`, then the provider's **default key**
+   (`default_key`, else the unnamed one).
+
+A named key covers **every API** of the provider. An account's key works for
+chat, images and embeddings alike. An API binding's own `api_key` (§4.6) is
+an override of the *unnamed* key only. When a request names a key, that key
+is used for every API, and the binding's own key is skipped. Per-API keys
+under a named key are left out (open question 2).
+
+In the effective config, the chosen key goes in `_key_scope` as `{key:
+NAME}`, next to today's `{api}` / `{model}`. Everything downstream that
+reads `_key_scope` then finds the right saved key unchanged.
+
+### 11.5 Saved keys
+
+Each named key has its own slot in the saved store:
+
+| Store | Unnamed key (today) | Named key `work` |
+|---|---|---|
+| Keychain / Credential Manager / Secret Service account | `openai[@home]` | `openai#work[@home]` |
+| Key file (no store) | `providers/openai/api-key` | `providers/openai/keys/work` |
+
+`#` can't appear in a provider name, nor in a key name. The `keys/`
+folder can't clash with `api-key-<api>`. Rename and remove provider carry
+named keys along, as they do the others. Removing a named key from the
+config deletes its saved key.
+
+### 11.6 Things that belong to an account
+
+Some provider objects only exist in the account that made them, so the
+key that made them must be used again:
+- **Background jobs** (`respond --background --detach`): `jobs status` /
+  `jobs wait` take `--key`. The command Lexi prints for checking on a job
+  includes it.
+- **Uploaded files** (`file:<id>` attachments): use the same `--key` as the
+  upload. A mismatch is the provider's "not found" error; Lexi can't tell
+  which account owns an id.
+- **The catalog** (`models hosted`): accounts can see different models, such
+  as fine-tunes. The cache stays one per provider for now (open question 3).
+  `models hosted --key work` lists, and caches, what that account sees.
+
+### 11.7 Surfaces
+
+| Operation | lexi-host | CLI | Python |
+|---|---|---|---|
+| Use a named key for a request | `key` on `ChatRequest`, `EmbedRequest`, upload, hosted listing, job status | `--key NAME` on `respond`, `generate`, `embed`, `upload`, `models hosted`, `providers status`, `jobs status\|wait` | `key="NAME"` on `respond`, `stream`, `submit`, `prepare`, `generate`, `embed`, `upload`, `models.hosted`, `providers.status`, `jobs.*` |
+| List a provider's keys | `key_names` (each `{name, default, source, from}`, never the key) | `providers api-key list NAME` | `providers.keys` |
+| Add / rename / remove a named key | `add_named_key`, `rename_named_key`, `remove_named_key` | `providers api-key add\|rename\|rm NAME KEY` | `providers.add_key`, `rename_key`, `remove_key_name` |
+| Choose the default key | `set_default_key` | `providers api-key default NAME [KEY]` | `providers.set_default_key` |
+| Save / show / remove a named key's saved key, edit its sources | today's functions, gaining `key` | `providers api-key set\|show\|remove\|source … --name KEY` | today's functions, gaining `key=` |
+
+- `providers api-key set openai --name work` creates the named key if it
+  doesn't exist yet. That's the one-step path most people need.
+- `api-key show` without `--name` shows the default key, and says which one
+  that is.
+
+**Desktop app** (with step 4):
+- The API key panel shows one tab per key, plus **Add key**.
+- In Chat and Images, a provider with more than one key gets a key picker
+  in its column, so the same prompt can go to two accounts side by side.
+- The Setup Wizard saves the unnamed key, as today.
+- The ">_" command help includes `--key` whenever the picker isn't on the
+  default.
+
+### 11.8 Migration and compatibility
+
+There's nothing to migrate: a config without `keys` behaves exactly as
+today. A config with `keys` is ignored by an older Lexi, which keeps using
+the unnamed key, so a request meant for `work` would be billed to the
+unnamed account. The release notes say so. People using the second-provider
+workaround can keep it. `providers api-key add` doesn't convert it.
+
+### 11.9 Rollout
+
+Named keys come **before step 4**, so the desktop key screen is built once
+with them in it:
+- **Step 3a, the host, CLI and Python:**
+  - `keys` / `default_key`;
+  - the selection rules;
+  - the slots;
+  - `--key` / `key=`;
+  - the list / add / rename / rm / default commands;
+  - jobs and uploads.
+- **Step 4, desktop:** as planned, plus the key tabs and pickers.
+
+### 11.10 Open questions
+
+1. **The flag's name:** `--key work` (proposed: it matches `keys:` and
+   `api-key`) or `--account work`, which says what it's for but isn't
+   always true (a shared team key)?
+2. **Per-API keys under a named key** (`keys.work.apis.image-generations`):
+   left out until someone needs it.
+3. **A catalog cache per named key:** only if accounts' model lists turn
+   out to differ in practice.
+4. **A shorthand** such as `openai#work` wherever a provider name is
+   accepted. It would be shorter, but it makes "provider" mean two things.
+   Proposed: no.
