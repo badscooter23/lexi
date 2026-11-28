@@ -1918,6 +1918,11 @@ fn legacy_entry(template: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
+/// `name`'s entry as written in providers-config.yaml (no template applied).
+pub(crate) fn raw_provider_entry(name: &str) -> Result<Map, HostError> {
+    raw_entry(&mut read_providers_doc(&lexi_home())?, name)
+}
+
 fn raw_entry(doc: &mut Map, name: &str) -> Result<Map, HostError> {
     providers_mut(doc)
         .get(name)

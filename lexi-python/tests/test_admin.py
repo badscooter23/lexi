@@ -314,3 +314,12 @@ def test_key_sources_can_be_listed_added_and_removed(home, tmp_path):
         lexi.providers.add_key_source("openai", env="A", file="b")
     with pytest.raises(lexi.LexiError):
         lexi.providers.add_key_source("openai", command=[])
+
+
+def test_hosted_schema_shows_how_the_listing_is_fetched(home):
+    s = lexi.models.hosted_schema("anthropic")
+    assert s["url"] == "https://api.anthropic.com/v1/models"
+    assert (s["source"], s["template"]) == ("template", "anthropic")
+    assert s["catalog"]["name"] == {"path": "display_name"}
+    with pytest.raises(lexi.LexiError):
+        lexi.models.hosted_schema("nope")

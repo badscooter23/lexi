@@ -624,6 +624,9 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
             json!({ "provider": r.provider, "model": r.model, "api": r.api, "kind": r.kind, "tags": r.tags })
         }
         "tags.vocabulary" => lexi_host::models::tag_vocabulary(),
+        "models.hosted_schema" => {
+            lexi_host::hosted::hosted_schema(a.str("provider")?).map_err(e)?
+        }
         "models.hosted" => {
             let p = a.string("provider")?;
             let cached = a.flag("cached");

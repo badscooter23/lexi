@@ -17,9 +17,16 @@ pub(crate) async fn run(io: &mut Io<'_>, cmd: ModelsCmd) -> u8 {
         ModelsCmd::Hosted {
             provider,
             raw,
+            schema: true,
+            ..
+        } => hosted_schema(io, &provider, raw),
+        ModelsCmd::Hosted {
+            provider,
+            raw,
             table,
             tags,
             cached,
+            schema: false,
         } => hosted(io, &provider, raw, table, &tags, cached).await,
         ModelsCmd::Default {
             provider,
@@ -213,6 +220,36 @@ fn list(
         lines.join("\n")
     };
     io.result(human, json)
+}
+
+/// `models hosted --schema`: the endpoint and catalog settings, as YAML.
+fn hosted_schema(io: &mut Io<'_>, provider: &str, raw: bool) -> u8 {
+    let info = match lexi_host::hosted::hosted_schema(provider) {
+        Ok(v) => v,
+        Err(e) => return io.fail(e),
+    };
+    if raw {
+        return io.result(pretty(&info), info);
+    }
+    let url = scalar(info.get("url"));
+    let mut lines = vec![format!("{provider}'s hosted models: GET {url}")];
+    let empty = info["catalog"].as_object().is_none_or(|c| c.is_empty());
+    if empty {
+        lines.push(
+            "No catalog settings: the models are read from the response's `data` (or `models`) list, by `id`."
+                .into(),
+        );
+    } else {
+        let from = match (info["source"].as_str(), info["template"].as_str()) {
+            (Some("template"), Some(t)) => format!("the {t} template"),
+            (Some("config"), Some(t)) => format!("providers-config.yaml (over the {t} template)"),
+            _ => "providers-config.yaml".to_string(),
+        };
+        lines.push(format!("Catalog settings, from {from}:"));
+        let yaml = serde_yaml::to_string(&info["catalog"]).unwrap_or_default();
+        lines.extend(yaml.lines().map(|l| format!("  {l}")));
+    }
+    io.result(lines.join("\n"), info)
 }
 
 async fn hosted(

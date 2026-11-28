@@ -13,6 +13,9 @@ go under **Unreleased**; at release time that heading becomes the version
 - **Change where a key is looked for from the command line.** `lexi providers api-key source list`, `add` and `rm` (Python: `lexi.providers.key_sources`, `add_key_source`, `remove_key_source`) list the places in order, add an environment variable, a file, a command or the saved key's place, and take them out.
 - **Saving a key no longer edits providers-config.yaml.** The key Lexi saves is always looked in after the places you list (put `saved` in the list to look in it earlier), and saving never writes to a file you listed. Your config is tidied once: Lexi's own key file comes out of the list, and the same key keeps being used.
 
+### Models
+- **See how a provider's model list is fetched.** `lexi models hosted <provider> --schema` (Python: `lexi.models.hosted_schema`) shows the address Lexi asks and the catalog settings it uses: paging, the fields shown, and the rules that turn the listing into tags and limits. It also says whether they come from the provider's template or your providers-config.yaml. Nothing is fetched.
+
 ## 0.3.0 — 2026-11-25
 
 Lexi 0.3.0 brings an Images tab and a CLI tab to the desktop app, shows the command behind every button, keeps your API keys in files only you can read, and gives each provider a default model for each kind.

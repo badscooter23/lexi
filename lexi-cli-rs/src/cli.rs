@@ -505,6 +505,12 @@ pub enum ModelsCmd {
         /// Use the last fetched listing instead of calling the provider.
         #[arg(long)]
         cached: bool,
+        /// Show how the listing is fetched instead of fetching it: the models
+        /// endpoint and the catalog settings (paging, fields, tag and limit
+        /// rules), and whether they come from the provider's template or
+        /// providers-config.yaml.
+        #[arg(long, conflicts_with_all = ["table", "tags", "cached"])]
+        schema: bool,
     },
     /// Show a provider's default model for each kind, or set one.
     ///
