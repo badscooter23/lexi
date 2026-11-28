@@ -74,13 +74,13 @@ def set_key(name: str, key: str, *, key_name: Optional[str] = None) -> Dict[str,
     """Save ``key`` as the value of the key ``key_name`` (or ``name`` written
     ``"openai#work"``; ``"openai#"`` a key saved before keys had names) —
     adding the key if it's new — in the OS key store (macOS Keychain,
-    Windows Credential Manager, the Linux desktop keyring), else an
+    Windows Credential Manager, Linux desktop keyring), else an
     owner-only file; ``key_store`` in the config picks. It's looked in after
     the sources the key's ``api_key`` lists, which are never written. The
     key must be named (``ValueError`` otherwise). Returns ``{provider,
     key_name, location, store, added, used}``: ``location`` is where it's
-    kept (``"the macOS Keychain"``, ``"Windows Credential Manager"``,
-    ``"your desktop keyring"`` or the file), ``store`` ``"keychain"``,
+    kept (``"macOS Keychain"``, ``"Windows Credential Manager"``,
+    ``"desktop keyring"`` or the file), ``store`` ``"keychain"``,
     ``"credential-manager"``, ``"secret-service"`` or ``"file"``, ``added``
     whether providers-config.yaml changed (the key was added, or a key
     written in it was taken out), ``used`` where the key is now read from

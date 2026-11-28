@@ -74,7 +74,7 @@ mod os_store {
     #[cfg(target_os = "macos")]
     const KIND: &str = "keychain";
     #[cfg(target_os = "macos")]
-    const NAME: &str = "the macOS Keychain";
+    const NAME: &str = "macOS Keychain";
     #[cfg(windows)]
     const KIND: &str = "credential-manager";
     #[cfg(windows)]
@@ -82,7 +82,7 @@ mod os_store {
     #[cfg(target_os = "linux")]
     const KIND: &str = "secret-service";
     #[cfg(target_os = "linux")]
-    const NAME: &str = "your desktop keyring";
+    const NAME: &str = "desktop keyring";
 
     /// macOS: a keychain in a temp dir, unlocked, left out of the search list
     /// (creating it adds it; the list is put back), deleted afterwards.

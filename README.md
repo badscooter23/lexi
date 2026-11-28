@@ -121,7 +121,7 @@ names, written after the provider: `openai#work`. A provider can have several,
 one per project or account, each with its own usage and billing.
 
 `lexi providers api-key set openai#work` (or the desktop app's Setup Wizard)
-saves a key in your OS key store — the macOS Keychain, Windows Credential
+saves a key in your OS key store — macOS Keychain, Windows Credential
 Manager or the Linux desktop keyring (elsewhere, an owner-only file under
 `~/.lexi-cli/providers/<provider>/keys/`) — never in `providers-config.yaml`.
 A key can also come from your own files and password managers (`command: [op,

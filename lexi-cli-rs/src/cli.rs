@@ -317,7 +317,7 @@ pub enum ProvidersCmd {
         /// The model used when none is given.
         #[arg(long = "default_model", visible_alias = "default-model")]
         default_model: String,
-        /// API key (saved in the OS key store — macOS Keychain, Windows Credential Manager, the desktop keyring — else an owner-only key file; never the config), as the key --key-name names.
+        /// API key (saved in the OS key store — macOS Keychain, Windows Credential Manager, desktop keyring — else an owner-only key file; never the config), as the key --key-name names.
         #[arg(long = "api_key", visible_alias = "api-key", requires = "key_name")]
         api_key: Option<String>,
         /// The name of the key --api-key saves (keys have names: PROVIDER#NAME).
@@ -439,7 +439,7 @@ pub enum KeysCmd {
 
 #[derive(Debug, Subcommand)]
 pub enum ApiKeyCmd {
-    /// Save a key's value as its saved key (in the OS key store — macOS Keychain, Windows Credential Manager, the Linux desktop keyring — else an owner-only file; key_store in config picks), looked in after the sources its api_key lists. Name the key: PROVIDER#KEY (a new name adds the key), PROVIDER# for one saved before keys had names. Prompted for, or read from stdin, without --value.
+    /// Save a key's value as its saved key (in the OS key store — macOS Keychain, Windows Credential Manager, Linux desktop keyring — else an owner-only file; key_store in config picks), looked in after the sources its api_key lists. Name the key: PROVIDER#KEY (a new name adds the key), PROVIDER# for one saved before keys had names. Prompted for, or read from stdin, without --value.
     Set {
         name: String,
         #[arg(short, long)]

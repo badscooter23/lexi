@@ -3717,14 +3717,14 @@
         default: return 'No key';
       }
     }
-    // Where a saved key goes: "in the macOS Keychain, encrypted with your
+    // Where a saved key goes: "in macOS Keychain, encrypted with your
     // login" or "in the file providers/openai/api-key" (a provider's
     // credentials, or what was just saved).
     function storePhrase(p) {
       const kind = typeof p.store === 'string' ? p.store : (p.store && p.store.kind);
-      if (kind === 'keychain') return 'in the macOS Keychain, encrypted with your login';
+      if (kind === 'keychain') return 'in macOS Keychain, encrypted with your login';
       if (kind === 'credential-manager') return 'in Windows Credential Manager, encrypted with your login';
-      if (kind === 'secret-service') return 'in your desktop keyring, encrypted with your login';
+      if (kind === 'secret-service') return 'in desktop keyring, encrypted with your login';
       const place = p.location || p.save_to;
       return place ? `in the file ${place}` : 'in a key file only you can read';
     }
