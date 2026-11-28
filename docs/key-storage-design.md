@@ -562,8 +562,8 @@ providers:
   Later keys start with none, so two keys never read the same variable by
   accident.
 - **New providers are seeded with one key, `main`,** whose sources are the
-  template's variable and its saved key. A fresh install works as today:
-  `export OPENAI_API_KEY=…` or `lexi providers api-key set openai` is enough.
+  template's variable and its saved key. On a fresh install, `export
+  OPENAI_API_KEY=…` or `lexi providers api-key set openai#main` is enough.
   `main` is an ordinary key, so it can be renamed or deleted.
 - **An API binding's or configured model's own `api_key`** (§4.6) still
   overrides the key, but only for a request that uses the **default** key.
@@ -581,21 +581,33 @@ providers:
 
 ### 12.5 Commands
 
-- **Name-required everywhere:**
-  - `providers api-key set openai#NAME` (or `--name NAME`) saves a key, and
-    creates it if it's new.
-  - `providers keys add openai NAME` adds it without a value.
-  - `providers keys rename openai OLD NEW` and `providers keys rm openai
-    NAME` work on any key.
-  - `providers keys default openai NAME` chooses the default.
-- **With no name, the commands that act on "the key"** (`api-key
-  set|show|remove|source`, `providers status`) act on the **default** key,
-  and say which one that is. With no key, or no default, they're refused
-  with a message that names the keys and the fix. So `lexi providers
-  api-key set openai` keeps working on a fresh install, where it saves
-  `main`.
-- **Python** matches: `key=` / `key_name=` take a name, `key="default"` goes,
-  and `providers.set_default_key(name, key)` needs a key.
+A command that **changes** a key always names it. A command that only
+**looks** at keys covers every key when it names none. Only a **request**
+uses the default (§12.4). Nothing that changes a key is ever applied to
+"whichever key is the default", so a write can't land on the wrong key.
+
+| Command | With a name (`openai#NAME`, or `--name NAME`) | With no name |
+|---|---|---|
+| `api-key set` | Saves that key's value, and creates the key if it's new | **Refused** |
+| `api-key remove` | Deletes that key's saved value (the key stays, not ready) | **Refused** |
+| `api-key source add\|rm` | Edits that key's sources | **Refused** |
+| `api-key show`, `api-key source list` | That key | **Every** key, ★ on the default |
+| `providers status` | Checks that key | Checks **every** key (and says whether requests with no key would work: is there a default, and is it ready?) |
+| `providers keys add\|rename\|rm\|default` | Take the key name as an argument, as in §11.7 | — |
+| Requests (`respond`, `generate`, `embed`, `upload`, `models hosted`, `jobs`) | That key | The **default** key, or the "not ready" error (§12.4) |
+
+- **The refusal says what to do**, e.g. `name the key: lexi providers
+  api-key set openai#main (openai's keys: main ★, projectx)`. With no key at
+  all: `openai has no key: add one with lexi providers api-key set
+  openai#NAME`.
+- **Python** matches:
+  - `set_key`, `remove_key`, `add_key_source` and `remove_key_source` need
+    `key_name=` (or `"openai#NAME"`) and raise the same error without it;
+  - `show_key`, `key_sources` and `providers.status` without one return
+    every key;
+  - requests take `key=`;
+  - `key="default"` goes, and `providers.set_default_key(name, key)` needs a
+    key.
 - **JSON:** `key_names` rows stay `{name, default, source, from}`, with every
   `name` a string. A provider result gains `ready` / `reason` (`no key`, `no
   default key`, `no key found`).
@@ -610,8 +622,10 @@ providers:
 - **Chat and Images** show one column per key when there are several, each
   `openai#NAME`, and just `openai` when there's one. No column is called
   "default".
-- **The Setup Wizard** saves the default key, showing its name. For a
-  provider with no key, it asks for a name, filled in with `main`.
+- **The Setup Wizard** always saves a named key. It shows the key's name,
+  filled in with the provider's only key (or its default) and changeable. For
+  a provider with no key, it's filled in with `main`. Every panel action
+  works on the open tab's key, by name.
 
 ### 12.7 Migration and compatibility
 
@@ -631,6 +645,11 @@ once:
 the provider's own slot. As in §6, the release notes say to run `providers
 api-key show --reveal` first. A key that comes only from `$OPENAI_API_KEY`
 works in both.
+
+**Commands from 0.3.0:** `lexi providers api-key set openai`, `remove` and
+`source add|rm` without a key name now fail, with the message from §12.5
+showing the name to add. Scripts need `openai#main`. The README,
+getting-started and the release notes change to match.
 
 ### 12.8 Rollout
 
