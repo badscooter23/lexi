@@ -34,3 +34,7 @@ providers/*/api-key.old
 
 # Tauri generated
 lexi-desktop/gen/
+
+# The Python extension maturin builds in place (`maturin develop`, `pip install -e`)
+lexi-python/python/lexi/_lexi*.so
+lexi-python/python/lexi/_lexi*.pyd
