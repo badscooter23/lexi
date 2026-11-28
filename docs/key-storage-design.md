@@ -504,7 +504,7 @@ Decided 2026-11-28:
 
 **Status:** proposed · 2026-11-28 · revises §11 (not yet released, so
 nothing depends on the §11 behaviour). The rules in §12.2 were decided
-2026-11-28; §12.9 lists what's still open.
+2026-11-28, and so were the points in §12.9.
 
 ### 12.1 Why
 
@@ -562,6 +562,11 @@ they should all behave the same way.
    - A key's *own* sources may still list variables (`keys.personal.api_key:
      [{env: PERSONAL_OPENAI_KEY}]`). That's where that key's value is
      kept, and it's separate from this rule.
+6. **Keys belong to the provider, not to an API or a model.** A key covers
+   every API the provider has: chat, images and embeddings alike. An API
+   binding or a configured model can't have its own `api_key` any more (§4.6
+   and §11.10 #2 are replaced). To use a different key for some requests,
+   name it in them (`openai#images`).
 
 ### 12.3 Config
 
@@ -597,25 +602,22 @@ providers:
   no key and picks no name. The provider is ready if its variable is set,
   and otherwise not ready until you add a named key. Every key is one you
   named.
-- **An API binding's or configured model's own `api_key`** (§4.6) still
-  overrides the key, but only for a request that uses the **default** key.
-  A request that names a key uses that key for every API. This keeps
-  §11.10 #2: there are no per-API keys under a key.
+- **API bindings and configured models have no `api_key`** (rule 6). One
+  left in a config is reported as an error that points to §12.7. It's never
+  used.
 
 ### 12.4 Which key a request uses
 
 1. The key the request names: `--key projectx`, `key=`, `openai#projectx`,
    or the desktop column. `openai#` names the unnamed key (rule 1). An
    unknown name is an error that lists the keys.
-2. Otherwise, in order:
-   - a configured model's own `api_key`, then an API binding's own (§12.3:
-     set up because that model or API needs a different key, which the
-     provider's variable wouldn't be either);
-   - **the provider's variable, when it's set** (§12.2 rule 5);
-   - the **default** key (§12.2 rule 3).
-3. Nothing at all, or several keys with no default and no variable, is the
+2. Otherwise **the provider's variable, when it's set** (§12.2 rule 5).
+3. Otherwise the **default** key (§12.2 rule 3).
+
+Which API or model the request uses doesn't change the key (rule 6).
+4. Nothing at all, or several keys with no default and no variable, is the
    "not ready" error, never a silent fallback to some other key.
-4. Lexi says what it used: `-v` prints `key: $OPENAI_API_KEY` or `key:
+5. Lexi says what it used: `-v` prints `key: $OPENAI_API_KEY` or `key:
    #projectx`. Status and the desktop app say the same (§12.5, §12.6).
 
 ### 12.5 Commands
@@ -644,6 +646,8 @@ uses the default (§12.4). Nothing that changes a key is ever applied to
   api-key set openai#NAME (openai's keys: # ★, projectx)`. With no key at
   all: `openai has no key: add one with lexi providers api-key set
   openai#NAME`.
+- **`--api` goes** from `api-key set|show|remove|source` (Python: `api=`),
+  since APIs no longer have keys (rule 6).
 - **Python** matches:
   - `set_key`, `remove_key`, `add_key_source` and `remove_key_source` need
     `key_name=` (or `"openai#NAME"`) and raise the same error without it;
@@ -705,6 +709,26 @@ uses the default (§12.4). Nothing that changes a key is ever applied to
     variable. The release notes say so.
   - Anyone who wants the stored key can unset the variable, or name the
     key.
+- **An API's or model's own key becomes a named key,** once, so a key you
+  saved isn't lost or left unused without your knowing:
+  - **An API binding's own key** (its `api_key` list, and its saved key
+    `openai/<api>` or `providers/openai/api-key-<api>`) becomes the named key
+    `#<api>`, e.g. `#image-generations`. Its saved key moves to that key's
+    slot (read back first, as in §6), and the binding's `api_key` comes out.
+  - **A configured model's own `api_key`** (sources only; a model never had
+    a saved key) becomes a named key named after the model, made to fit
+    the name rules (characters other than letters, digits, `-` and `_`
+    become `-`, cut to 32). `-2`, `-3` and so on are added on a clash.
+  - **What changes:** requests to that API or model now use the variable or
+    the default like everything else. To keep billing them to that key,
+    name it (`openai#image-generations`), or make it the default.
+  - Lexi says once: "openai's image-generations API had its own key. It's
+    now the key #image-generations, used only when a request names it.
+    Rename it with `lexi providers keys rename openai image-generations
+    NEW`."
+  - This is the one case where Lexi chooses a name, and it's derived from
+    yours: the alternative was to stop using a key you saved without
+    saying so.
 - **§11 development-build configs:** `default_key: default` becomes "the
   unnamed key", and `openai#default` in a command is refused with a hint to
   write `openai#`.
@@ -713,7 +737,10 @@ uses the default (§12.4). Nothing that changes a key is ever applied to
 0.3.0 reads the provider's own slot. Two things it no longer finds:
 - the provider's variable, once it's out of the list (put `{env:
   OPENAI_API_KEY}` back in `api_key` for 0.3.0 to read it);
-- the original key once it's renamed, and any key added later. As in §6, the release notes say to run `providers api-key
+- the original key once it's renamed, and any key added later.
+- an API's own key, once it's become a named key.
+
+As in §6, the release notes say to run `providers api-key
 show --reveal` first.
 
 **Commands from 0.3.0:** `lexi providers api-key set openai`, `remove` and
@@ -731,17 +758,22 @@ getting-started and the release notes change to match.
    - the name-required commands and the default rules;
    - `ready` / `uses` / `reason`;
    - removing `default` as a name;
-   - no seeded keys.
+   - no seeded keys;
+   - removing API and model own keys: `--api` / `api=`, their slots and the
+     `api-key-<api>` files, with the one-time conversion in §12.7.
 2. **Desktop:** #85 reworked to match §12.6.
 
-### 12.9 Open questions
+### 12.9 Decisions
 
-1. **API and model own keys** (§12.3, §12.4): keep them as overrides for a
-   request that names no key, ahead of the variable, as proposed, or drop
-   them now that a key can be chosen per request?
-
-Decided 2026-11-28, besides §12.2:
-- **No starter keys.** A fresh install and a new provider have no keys (§12.3).
-  Lexi never picks a name.
+Decided 2026-11-28, besides the rules in §12.2:
+- **A key saved before names existed stays unnamed**, written `openai#`,
+  until you rename it. Nothing is renamed or moved on upgrade (§12.7).
+- **Key tabs are labelled `#NAME`,** and the unnamed one just `#` (§12.6).
+- **Commands that change a key must name it.** Commands that only look at
+  keys cover them all, and only requests use the default (§12.5).
+- **No starter keys.** A fresh install and a new provider have no keys
+  (§12.3), so Lexi never picks a name for a key you create.
 - **The provider's variable wins** over the ★ default for a request that
   names no key (rule 5).
+- **No API or model own keys** (rule 6). Existing ones become named keys
+  once (§12.7).
