@@ -801,6 +801,10 @@
     .key-table tr:last-child td { border-bottom: none; }
     .key-table .key-name code { font-size: 0.92rem; }
     .key-table .key-from { color: var(--muted); font-size: 0.84rem; overflow-wrap: anywhere; }
+    .key-table .key-value-cell { min-width: 16ch; }
+    .key-table .key-value.revealed { max-width: 40ch; white-space: normal; overflow-wrap: anywhere; user-select: all; }
+    .key-table .key-value { font-size: 0.82rem; max-width: 22ch; display: inline-block; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+    .key-table .key-value-cell .key-view-state { display: inline; margin: 0 4px; }
     .key-table .key-actions { text-align: right; white-space: nowrap; }
     .key-table .key-actions > * { margin-left: 4px; }
     .key-state { font-size: 0.84rem; color: var(--muted); }
@@ -3763,6 +3767,46 @@
         : '';
     }
 
+    // Each key's value as the list shows it: redacted, or in clear text after
+    // Show (name → {key, revealed}); refetched redacted with every refresh.
+    let keyValues = {};
+    function valueCell(k) {
+      if (!k.source) return '<span class="muted">—</span>';
+      const v = keyValues[k.name];
+      if (!v || v.key == null) {
+        return k.source === 'command'
+          ? '<span class="muted" data-tip="A command supplies it; Show runs the command">from a command</span>'
+            + ` <button type="button" class="btn btn-ghost btn-sm key-act" data-act="reveal" data-key="${esc(k.name)}" data-cmd="key-show" data-tip="Run the command and show the key in clear text">Show</button>`
+          : '<span class="muted">…</span>';
+      }
+      return `<code class="key-value${v.revealed ? ' revealed' : ''}">${esc(v.key)}</code>
+        <span class="key-view-state${v.revealed ? ' clear' : ''}">${v.revealed ? 'clear text' : 'redacted'}</span>
+        <button type="button" class="btn btn-ghost btn-sm key-act" data-act="reveal" data-key="${esc(k.name)}" data-cmd="key-show"
+          data-tip="${v.revealed ? 'Redact the key again' : 'Show the key in clear text'}">${v.revealed ? 'Hide' : 'Show'}</button>`;
+    }
+
+    // Each key's value, redacted (commands aren't run).
+    async function loadKeyValues(provider) {
+      const keys = ((apiKeyList && apiKeyList.keys) || []).filter((k) => k.source && k.source !== 'command');
+      const got = await Promise.all(keys.map((k) => keyCall('show', {}, k.name).then((d) => [k.name, d.key]).catch(() => [k.name, null])));
+      if (apiKeyProviderEl.value !== provider) return;
+      keyValues = {};
+      got.forEach(([name, key]) => { keyValues[name] = { key, revealed: false }; });
+      renderKeyList(provider);
+    }
+
+    async function toggleKeyValue(name) {
+      const provider = apiKeyProviderEl.value;
+      const revealed = !(keyValues[name] && keyValues[name].revealed);
+      try {
+        const d = await keyCall('show', { reveal: revealed }, name);
+        keyValues[name] = { key: d.key, revealed: revealed && d.key != null };
+        renderKeyList(provider);
+      } catch (err) {
+        setStatus(err.message, 'error');
+      }
+    }
+
     function renderKeyList(provider) {
       const keys = (apiKeyList && apiKeyList.keys) || [];
       if (!keys.length) {
@@ -3782,6 +3826,7 @@
           : `<button type="button" class="btn btn-ghost btn-sm key-act" data-act="default" data-key="${esc(k.name)}" data-cmd="key-default" data-tip="Make ${esc(provider)}${esc(k.label)} the default: the key requests use when they name none">Make Default</button>`;
         return `<tr>
           <td class="key-name"><code>${esc(k.label || `#${k.name}`)}</code>${unnamed ? ' <span class="muted" data-tip="Saved before keys had names. Edit it to give it a name.">(no name)</span>' : ''}</td>
+          <td class="key-value-cell">${valueCell(k)}</td>
           <td class="key-from">${from}</td>
           <td>${state}</td>
           <td class="key-actions">
@@ -3793,7 +3838,7 @@
       }).join('');
       const note = several && !keys.some((k) => k.default)
         ? '<div class="warn-text" style="margin-top:6px;">No default: a request has to name a key until you make one the default.</div>' : '';
-      apiKeyListEl.innerHTML = `<table class="key-table"><thead><tr><th>Key</th><th>Comes from</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>${note}`;
+      apiKeyListEl.innerHTML = `<table class="key-table"><thead><tr><th>Key</th><th>Value</th><th>Comes from</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>${note}`;
     }
 
     async function fetchApiKeyStatus(provider) {
@@ -3802,8 +3847,10 @@
         const list = await api('/api/providers/keys', { method: 'POST', body: JSON.stringify({ action: 'list', provider }) });
         if (apiKeyProviderEl.value !== provider) return;
         apiKeyList = list;
+        keyValues = {};
         renderVariable(list);
         renderKeyList(provider);
+        loadKeyValues(provider);
       } catch (err) {
         apiKeyListEl.innerHTML = `<div class="warn-text">${esc(err.message)}</div>`;
       }
@@ -3839,7 +3886,8 @@
       const btn = e.target.closest('.key-act');
       if (!btn || btn.disabled) return;
       const name = btn.dataset.key;
-      if (btn.dataset.act === 'default') setDefaultKey(name);
+      if (btn.dataset.act === 'reveal') toggleKeyValue(name);
+      else if (btn.dataset.act === 'default') setDefaultKey(name);
       else if (btn.dataset.act === 'test') testKey(name);
       else if (btn.dataset.act === 'edit') editKey(name);
       else if (btn.dataset.act === 'delete') deleteNamedKey(name);
