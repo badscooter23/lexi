@@ -911,6 +911,7 @@ fn set_api_key_in(home: &Path, target: &str, key: &str) -> Result<SavedKey, Host
     let slot = r.slot();
     let label = r.target();
     store.write(&slot, key)?;
+    move_key_check(home, &r.provider, &key_label(&r.key), None);
     keystore::forget_commands();
     let has_literal = r.sources.iter().any(|s| matches!(s, Source::Literal(_)));
     let added = has_literal || r.new;
@@ -940,6 +941,7 @@ pub fn remove_api_key(target: &str) -> Result<bool, HostError> {
 
 fn remove_api_key_in(home: &Path, target: &str) -> Result<bool, HostError> {
     let r = key_ref(home, target, false, "providers api-key remove")?;
+    move_key_check(home, &r.provider, &key_label(&r.key), None);
     keystore::forget_commands();
     Store::open(home)?.delete(&r.slot())
 }
@@ -1006,6 +1008,86 @@ fn key_source_list_in(home: &Path, target: &str) -> Result<Value, HostError> {
     }))
 }
 
+/// The last test of each of a provider's keys (`providers status`, the
+/// app's Test): `providers/<p>/key-checks.json`, `{label: {status, at, fp}}`
+/// — `label` `#work`, `#`, or `$OPENAI_API_KEY` for the variable; `status`
+/// `ok` (the provider accepted it), `rejected` (401/403) or `failed` (no
+/// answer); `at` seconds since 1970; `fp` a short fingerprint of the key
+/// tested (not the key), so a key that has changed since isn't reported as
+/// tested.
+const KEY_CHECKS: &str = "key-checks.json";
+
+/// A fingerprint of `key`: enough to tell whether it changed, not to
+/// recover it.
+fn key_fingerprint(key: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut h);
+    format!("{:08x}", h.finish() >> 32)
+}
+
+fn read_key_checks(home: &Path, provider: &str) -> Map {
+    match read_provider_file(home, provider, KEY_CHECKS) {
+        Ok(Value::Object(m)) => m,
+        _ => Map::new(),
+    }
+}
+
+fn write_key_checks(home: &Path, provider: &str, checks: &Map) {
+    let path = provider_file(home, provider, KEY_CHECKS);
+    if checks.is_empty() {
+        let _ = std::fs::remove_file(path);
+    } else {
+        let _ = write_json(&path, &Value::Object(checks.clone()));
+    }
+}
+
+/// Remember a test of `provider`'s key `label` (`#work`, `#`,
+/// `$OPENAI_API_KEY`): `status` `ok`, `rejected` or `failed`. Best effort.
+pub(crate) fn record_key_check(provider: &str, label: &str, status: &str, key: &str) {
+    record_key_check_in(&lexi_home(), provider, label, status, key);
+}
+
+fn record_key_check_in(home: &Path, provider: &str, label: &str, status: &str, key: &str) {
+    let mut checks = read_key_checks(home, provider);
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    checks.insert(
+        label.to_string(),
+        serde_json::json!({ "status": status, "at": at, "fp": key_fingerprint(key) }),
+    );
+    write_key_checks(home, provider, &checks);
+}
+
+/// Forget the test of `provider`'s key `label`, or move it to `to` (a
+/// renamed key). Best effort.
+fn move_key_check(home: &Path, provider: &str, label: &str, to: Option<&str>) {
+    let mut checks = read_key_checks(home, provider);
+    if let Some(v) = checks.shift_remove(label) {
+        if let Some(t) = to {
+            checks.insert(t.to_string(), v);
+        }
+        write_key_checks(home, provider, &checks);
+    }
+}
+
+/// The last test of `provider`'s key `label`, as `{status, at}` — none when
+/// it was never tested, or `value` (the key now, when it's known without
+/// running a command) isn't the key that was tested.
+fn key_check(checks: &Map, label: &str, value: Option<&str>) -> Value {
+    let Some(c) = checks.get(label) else {
+        return Value::Null;
+    };
+    if let Some(v) = value {
+        if c.get("fp").and_then(Value::as_str) != Some(key_fingerprint(v).as_str()) {
+            return Value::Null;
+        }
+    }
+    serde_json::json!({ "status": c.get("status"), "at": c.get("at") })
+}
+
 /// `{name, set}` for the provider's variable, or null without one.
 fn variable_value(cfg: &Value) -> Value {
     match provider_variable(cfg) {
@@ -1043,6 +1125,7 @@ fn add_key_source_in(
     let new = source_arg(source)?;
     let r = key_ref(home, target, false, "providers api-key source add")?;
     let label = r.target();
+    move_key_check(home, &r.provider, &key_label(&r.key), None);
     let mut list = r.sources.clone();
     let had = list.iter().any(|s| s.same_place(&new));
     if !had || first {
@@ -1072,6 +1155,7 @@ fn remove_key_source_in(home: &Path, target: &str, source: &Value) -> Result<boo
     if !r.sources.iter().any(|s| s.same_place(&gone)) {
         return Ok(false);
     }
+    move_key_check(home, &r.provider, &key_label(&r.key), None);
     let list: Vec<Source> = r
         .sources
         .iter()
@@ -1105,10 +1189,12 @@ fn key_names_in(home: &Path, provider: &str) -> Result<Value, HostError> {
     let store = Store::open(home)?;
     let names = key_list(&store, provider, &resolved);
     let default = default_of(&resolved, &names);
+    let checks = read_key_checks(home, provider);
     let mut rows = Vec::new();
     for name in &names {
         let r = key_ref(home, &format!("{provider}#{name}"), false, "")?;
         let found = ref_lookup(home, &store, &r, false);
+        let check = key_check(&checks, &key_label(name), found.key.as_deref());
         let (source, from, error) = match found.failure() {
             Some((s, e)) => (None, Some(s.describe()), Some(e.to_string())),
             None => (
@@ -1123,6 +1209,7 @@ fn key_names_in(home: &Path, provider: &str) -> Result<Value, HostError> {
             "default": default.as_ref().ok() == Some(name),
             "source": source,
             "from": from,
+            "check": check,
         });
         if let Some(e) = error {
             row["error"] = Value::from(e);
@@ -1130,6 +1217,10 @@ fn key_names_in(home: &Path, provider: &str) -> Result<Value, HostError> {
         rows.push(row);
     }
     let var = provider_variable(&resolved);
+    let mut variable = variable_value(&resolved);
+    if let Some(v) = var.as_deref().filter(|v| variable_set(v)) {
+        variable["check"] = key_check(&checks, &format!("${v}"), std::env::var(v).ok().as_deref());
+    }
     let (uses, reason) = match (&var, &default) {
         (Some(v), _) if variable_set(v) => (serde_json::json!({ "variable": v }), Value::Null),
         (_, Ok(d)) => {
@@ -1150,7 +1241,7 @@ fn key_names_in(home: &Path, provider: &str) -> Result<Value, HostError> {
         "default_key": default.as_ref().ok(),
         "store": { "kind": store.kind() },
         "keys": rows,
-        "variable": variable_value(&resolved),
+        "variable": variable,
         "ready": reason.is_null(),
         "uses": uses,
         "reason": reason,
@@ -1230,6 +1321,7 @@ fn rename_named_key_in(home: &Path, provider: &str, old: &str, new: &str) -> Res
     }
     let (from, to) = (key_slot(provider, old), key_slot(provider, new));
     store.rename(&from, &to)?;
+    move_key_check(home, provider, &key_label(old), Some(&key_label(new)));
     let (from_file, to_file) = (
         keystore::file_path(home, &from.file()),
         keystore::file_path(home, &to.file()),
@@ -1288,6 +1380,7 @@ fn remove_named_key_in(home: &Path, provider: &str, name: &str) -> Result<(), Ho
         entry.shift_remove("default_key");
     }
     store.delete(&slot)?;
+    move_key_check(home, provider, &key_label(name), None);
     let file = keystore::file_path(home, &slot.file());
     if file.exists() {
         std::fs::remove_file(file)?;
@@ -4269,6 +4362,36 @@ mod tests {
         assert_eq!(models["models"]["gpt-4o.mini"], json!({"description": "d"}));
         // Once only.
         assert!(adopt_own_keys(home).is_empty());
+    }
+
+    #[test]
+    fn a_keys_last_test_is_listed_until_the_key_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        write_providers(
+            home,
+            "providers:\n  p:\n    url: u\n    api: chat-completions\n",
+        );
+        set_api_key_in(home, "p#work", "k-1").unwrap();
+        record_key_check_in(home, "p", "#work", "ok", "k-1");
+        let check = |home: &Path| key_names_in(home, "p").unwrap()["keys"][0]["check"].clone();
+        assert_eq!(check(home)["status"], "ok");
+        assert!(check(home)["at"].as_u64().is_some());
+        // The fingerprint isn't the key.
+        let file = std::fs::read_to_string(home.join("providers/p/key-checks.json")).unwrap();
+        assert!(!file.contains("k-1"), "{file}");
+        // A rename carries it along; a new value drops it.
+        rename_named_key_in(home, "p", "work", "acme").unwrap();
+        assert_eq!(check(home)["status"], "ok");
+        set_api_key_in(home, "p#acme", "k-2").unwrap();
+        assert!(check(home).is_null());
+        // A key that changed behind Lexi's back (a different value) isn't tested.
+        record_key_check_in(home, "p", "#acme", "rejected", "k-old");
+        assert!(check(home).is_null());
+        record_key_check_in(home, "p", "#acme", "rejected", "k-2");
+        assert_eq!(check(home)["status"], "rejected");
+        remove_named_key_in(home, "p", "acme").unwrap();
+        assert!(!home.join("providers/p/key-checks.json").exists());
     }
 
     #[test]

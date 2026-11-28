@@ -203,7 +203,7 @@ fn keys_are_listed_added_renamed_and_removed() {
         "openai's default key is openai#personal: requests that name no key use it.\n"
     );
     assert!(ok(h, &["providers", "keys", "list", "openai"])
-        .starts_with("openai's keys (★ = used when a request names none):\n  #work      no key\n★ #personal  providers/openai/keys/personal\n$OPENAI_API_KEY isn't set"));
+        .starts_with("openai's keys (★ = used when a request names none):\n  #work      no key\n★ #personal  providers/openai/keys/personal  found\n$OPENAI_API_KEY isn't set"));
     ok(
         h,
         &["providers", "keys", "rename", "openai#personal", "home"],
