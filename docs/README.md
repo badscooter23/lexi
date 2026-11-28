@@ -9,4 +9,4 @@
 ## Developer Guides
 
 - [Architecture](architecture.md) — System design, config resolution, and key internals
-- [API key storage](key-storage-design.md) — Where keys are read from and saved (OS stores, `command:` sources); proposed
+- [API key storage](key-storage-design.md) — Where keys are read from and saved (OS stores, `command:` sources); accepted, steps 1–3 implemented; named keys (several accounts per provider) proposed
