@@ -1083,9 +1083,10 @@ fn remove_key_source_in(home: &Path, target: &str, source: &Value) -> Result<boo
     Ok(true)
 }
 
-/// A provider's keys (§12): `{provider, default_key, keys: [{name, label,
-/// default, source, from, error?}], variable: {name, set}, ready, uses,
-/// reason}` — the unnamed key (`name: ""`, label `#`) first when there is
+/// A provider's keys (§12): `{provider, default_key, store: {kind}, keys:
+/// [{name, label, default, source, from, error?}], variable: {name, set},
+/// ready, uses, reason}` — `store` where saved keys are kept (`keychain`,
+/// `credential-manager`, `secret-service`, `file`); the unnamed key (`name: ""`, label `#`) first when there is
 /// one, then the named ones, each with where its key comes from (`source` /
 /// `from`, null when none has one; commands aren't run); `default_key` the
 /// ★ key's name (null: none); `uses` what a request that names no key uses
@@ -1147,6 +1148,7 @@ fn key_names_in(home: &Path, provider: &str) -> Result<Value, HostError> {
     Ok(serde_json::json!({
         "provider": provider,
         "default_key": default.as_ref().ok(),
+        "store": { "kind": store.kind() },
         "keys": rows,
         "variable": variable_value(&resolved),
         "ready": reason.is_null(),
