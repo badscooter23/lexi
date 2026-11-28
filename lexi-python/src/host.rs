@@ -118,7 +118,8 @@ struct ChatOpts {
     inputs: Vec<String>,
     /// This operation's time limit in seconds (0 = none).
     timeout: Option<u64>,
-    /// One of the provider's named keys (or write `provider#key`).
+    /// One of the provider's keys by name (or write `provider#key`;
+    /// `provider#` a key from before names).
     key: Option<String>,
 }
 
@@ -128,12 +129,14 @@ fn split_key(provider: &str, key: Option<&str>) -> PyResult<(String, Option<Stri
 }
 
 /// The argument the key admin functions take: `provider#key`, or the
-/// provider alone for its unnamed key.
+/// provider alone when no key is named (`docs/key-storage-design.md` §12.5:
+/// the functions that change a key refuse it, the ones that look cover
+/// every key).
 fn key_target(provider: &str, key: Option<&str>) -> PyResult<(String, String)> {
     let (p, k) = split_key(provider, key)?;
     let target = match k.as_deref() {
-        Some(k) if k != lexi_host::config::DEFAULT_KEY => format!("{p}#{k}"),
-        _ => p.clone(),
+        Some(k) => format!("{p}#{k}"),
+        None => p.clone(),
     };
     Ok((p, target))
 }
@@ -582,15 +585,24 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
         "providers.status" => {
             let name = a.string("name")?;
             let (provider, key) = split_key(&name, a.opt_str("key"))?;
-            block_on(
-                py,
-                lexi_host::config::with_key(key, async move {
-                    let st = lexi_host::check_api_key(&provider).await?;
-                    Ok(
-                        json!({ "provider": name, "status": st.status, "source": st.source, "from": st.from }),
-                    )
-                }),
-            )?
+            match key {
+                // Named none: every key, and the variable (§12.5).
+                None => block_on(py, async move {
+                    lexi_host::check_provider_keys(&provider).await
+                })?,
+                Some(k) => {
+                    let label = format!("{provider}{}", cfg::key_label(&k));
+                    block_on(
+                        py,
+                        lexi_host::config::with_key(Some(k), async move {
+                            let st = lexi_host::check_api_key(&provider).await?;
+                            let mut v = st.to_value(&label);
+                            v["provider"] = json!(provider);
+                            Ok(v)
+                        }),
+                    )?
+                }
+            }
         }
         "providers.keys" => cfg::key_names(a.str("name")?).map_err(e)?,
         "providers.add_key" => {
@@ -609,9 +621,9 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
             json!({ "provider": name, "removed": key })
         }
         "providers.set_default_key" => {
-            let name = a.str("name")?;
-            cfg::set_default_key(name, a.opt_str("key")).map_err(e)?;
-            json!({ "provider": name, "default_key": a.opt_str("key").unwrap_or(cfg::DEFAULT_KEY) })
+            let (name, key) = (a.str("name")?, a.str("key")?);
+            cfg::set_default_key(name, key).map_err(e)?;
+            json!({ "provider": name, "default_key": key })
         }
         "providers.add" => {
             let name = a.str("name")?;
@@ -619,7 +631,15 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
                 name,
                 a.str("url")?,
                 a.str("default_model")?,
-                a.opt_str("api_key"),
+                match (a.opt_str("key_name"), a.opt_str("api_key")) {
+                    (Some(n), Some(k)) => Some((n, k)),
+                    (None, Some(_)) => {
+                        return Err(lexi_err(lexi_host::HostError::Invalid(
+                            "api_key needs key_name: the name of the key it saves".into(),
+                        )))
+                    }
+                    _ => None,
+                },
                 a.opt_str("api").unwrap_or("chat-completions"),
                 a.opt_str("hosted_models").unwrap_or("/models"),
             )
@@ -639,7 +659,7 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
         "providers.set_key" => {
             let (name, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
             require_provider(&name).map_err(e)?;
-            let mut saved = cfg::set_api_key(&target, a.opt_str("api"), a.str("key")?)
+            let mut saved = cfg::set_api_key(&target, a.str("key")?)
                 .map_err(e)?
                 .to_value();
             saved["provider"] = json!(name);
@@ -648,21 +668,21 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
         }
         "providers.show_key" => {
             let (_, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
-            admin::api_key_info(&target, a.opt_str("api"), a.flag("reveal")).map_err(e)?
+            admin::api_key_info(&target, a.flag("reveal")).map_err(e)?
         }
         "providers.key_sources" => {
             let (_, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
-            cfg::key_source_list(&target, a.opt_str("api")).map_err(e)?
+            cfg::key_source_list(&target).map_err(e)?
         }
         "providers.add_key_source" => {
             let (_, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
             let source = a.0.get("source").cloned().unwrap_or(Value::Null);
-            cfg::add_key_source(&target, a.opt_str("api"), &source, a.flag("first")).map_err(e)?
+            cfg::add_key_source(&target, &source, a.flag("first")).map_err(e)?
         }
         "providers.remove_key_source" => {
             let (name, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
             let source = a.0.get("source").cloned().unwrap_or(Value::Null);
-            let removed = cfg::remove_key_source(&target, a.opt_str("api"), &source).map_err(e)?;
+            let removed = cfg::remove_key_source(&target, &source).map_err(e)?;
             json!({ "provider": name, "removed": removed })
         }
         "providers.upgrade" => {
@@ -694,7 +714,7 @@ fn _admin<'py>(py: Python<'py>, op: &str, args: &Bound<'py, PyAny>) -> PyResult<
         "providers.remove_key" => {
             let (name, target) = key_target(a.str("name")?, a.opt_str("key_name"))?;
             require_provider(&name).map_err(e)?;
-            json!({ "removed": cfg::remove_api_key(&target, a.opt_str("api")).map_err(e)? })
+            json!({ "removed": cfg::remove_api_key(&target).map_err(e)? })
         }
 
         // models

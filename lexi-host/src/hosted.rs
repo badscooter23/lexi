@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::{auth, config, HostError};
 
@@ -290,6 +290,12 @@ mod tests {
 pub struct KeyStatus {
     /// `"ready"`, `"no api-key"`, or `"invalid api-key"`.
     pub status: &'static str,
+    /// The key checked: `#work`, `#` (the unnamed key) or `$OPENAI_API_KEY`
+    /// (the provider's variable); none when there was nothing to check.
+    pub key: Option<String>,
+    /// Why there's no key to check (`no api-key`): the provider has none,
+    /// several and no default, or the key's sources found nothing.
+    pub reason: Option<String>,
     /// Where the key comes from (see [`config::api_key_source`]).
     pub source: Option<&'static str>,
     /// The file or variable it was read from.
@@ -303,9 +309,12 @@ pub struct KeyStatus {
 /// How long `check_api_key` waits for the models endpoint.
 const KEY_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Check a provider's API key with a live authenticated GET to its models
-/// endpoint: 401/403 means `invalid api-key`; success — or any other outcome
-/// that can't prove the key bad (timeouts, 5xx, no endpoint) — means `ready`.
+/// Check a provider's API key — the one a request would use (§12.4: the
+/// chosen key, else the variable when set, else the default) — with a live
+/// authenticated GET to its models endpoint: 401/403 means `invalid
+/// api-key`; success — or any other outcome that can't prove the key bad
+/// (timeouts, 5xx, no endpoint) — means `ready`; nothing to use is `no
+/// api-key`, with the reason.
 pub async fn check_api_key(provider: &str) -> Result<KeyStatus, HostError> {
     let providers = config::load_providers()?;
     let provider_cfg = providers
@@ -316,7 +325,20 @@ pub async fn check_api_key(provider: &str) -> Result<KeyStatus, HostError> {
     let eff = config::effective_config(provider, &provider_cfg)?;
     // Check afresh: a command runs again rather than answering from memory.
     crate::keystore::forget_commands();
-    let lookup = config::lookup_api_key(provider, &eff, true)?;
+    let (lookup, key) = match config::lookup_chosen_key(provider, &eff, true) {
+        Ok(found) => found,
+        Err(HostError::MissingApiKey(why)) => {
+            return Ok(KeyStatus {
+                status: "no api-key",
+                key: None,
+                reason: Some(why),
+                source: None,
+                from: None,
+                verified: false,
+            })
+        }
+        Err(e) => return Err(e),
+    };
     if let Some((s, e)) = lookup.failure() {
         return Err(HostError::Config(format!(
             "couldn't read {provider}'s API key from {}: {e}",
@@ -326,6 +348,8 @@ pub async fn check_api_key(provider: &str) -> Result<KeyStatus, HostError> {
     let (Some(api_key), Some(used)) = (lookup.key.clone(), lookup.used()) else {
         return Ok(KeyStatus {
             status: "no api-key",
+            reason: Some(format!("no API key found (looked in {})", lookup.summary())),
+            key: Some(key),
             source: None,
             from: None,
             verified: false,
@@ -344,8 +368,66 @@ pub async fn check_api_key(provider: &str) -> Result<KeyStatus, HostError> {
     };
     Ok(KeyStatus {
         status,
+        key: Some(key),
+        reason: None,
         source: Some(source),
         from: Some(from),
         verified,
     })
+}
+
+impl KeyStatus {
+    /// `{key, status, source, from, verified, reason}`, the key written as
+    /// `label` (`openai#work`, `$OPENAI_API_KEY`).
+    pub fn to_value(&self, label: &str) -> Value {
+        json!({
+            "key": label,
+            "status": self.status,
+            "source": self.source,
+            "from": self.from,
+            "verified": self.verified,
+            "reason": self.reason,
+        })
+    }
+}
+
+/// Check every key `provider` has, and its variable when it's set
+/// (`docs/key-storage-design.md` §12.5: `providers status` with no key
+/// named): `{provider, keys: [{key, status, source, from, verified,
+/// reason}], variable: {name, set, status?, verified?}, default_key, uses,
+/// ready, reason}` — each key as [`check_api_key`] reports it (`key` written
+/// `openai#work`; one that couldn't be read has `error`), and what a request
+/// that names no key would use ([`config::key_names`]).
+pub async fn check_provider_keys(provider: &str) -> Result<Value, HostError> {
+    let names = config::key_names(provider)?;
+    let mut rows = Vec::new();
+    for k in names["keys"].as_array().cloned().unwrap_or_default() {
+        let name = k["name"].as_str().unwrap_or_default().to_string();
+        let label = format!("{provider}{}", config::key_label(&name));
+        let row = match config::with_key(Some(name), check_api_key(provider)).await {
+            Ok(st) => st.to_value(&label),
+            Err(e) => json!({ "key": label, "error": e.to_string() }),
+        };
+        rows.push(row);
+    }
+    let mut variable = names["variable"].clone();
+    if names["variable"]["set"] == true {
+        let check = check_api_key(provider);
+        match config::with_key(Some(config::VARIABLE_KEY.to_string()), check).await {
+            Ok(st) => {
+                variable["status"] = Value::from(st.status);
+                variable["verified"] = Value::from(st.verified);
+            }
+            Err(e) => variable["error"] = Value::from(e.to_string()),
+        }
+    }
+    Ok(json!({
+        "provider": provider,
+        "keys": rows,
+        "variable": variable,
+        "default_key": names["default_key"],
+        "uses": names["uses"],
+        "ready": names["ready"],
+        "reason": names["reason"],
+    }))
 }

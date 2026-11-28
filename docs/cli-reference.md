@@ -337,15 +337,15 @@ lexi providers list [OPTIONS]
 
 #### `providers status`
 
-Check a provider's API key (live call to its models endpoint)
+Check a provider's API keys (a live call to its models endpoint; nothing is generated or billed): with a key named (PROVIDER#KEY), that key; without, every key and the provider's variable, and what a request that names no key would use
 
 ```
 lexi providers status [OPTIONS] <NAME>
 ```
 
 - `<NAME>`
-- `-r, --raw` — Print {provider, status, source} as JSON
-- `--key` — Check this named key (or write PROVIDER#KEY)
+- `-r, --raw` — Print the result as JSON
+- `--key` — Check this key (or write PROVIDER#KEY)
 
 #### `providers add`
 
@@ -358,13 +358,14 @@ lexi providers add [OPTIONS] --url <URL> --default_model <DEFAULT_MODEL> <NAME>
 - `<NAME>`
 - `--url` — Base URL, e.g. https://api.example.com/v1
 - `--default_model` — The model used when none is given
-- `--api_key` — API key (saved in the OS key store — macOS Keychain, Windows Credential Manager, the desktop keyring — else an owner-only key file; never the config)
+- `--api_key` — API key (saved in the OS key store — macOS Keychain, Windows Credential Manager, the desktop keyring — else an owner-only key file; never the config), as the key --key-name names
+- `--key_name` — The name of the key --api-key saves (keys have names: PROVIDER#NAME)
 - `--api` — API definition the provider speaks
 - `--hosted_models` — Path of the provider's models endpoint
 
 #### `providers api-key set`
 
-Save an API key as the provider's saved key (in the OS key store — macOS Keychain, Windows Credential Manager, the Linux desktop keyring — else an owner-only file, providers/<name>/api-key; key_store in config picks), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value
+Save a key's value as its saved key (in the OS key store — macOS Keychain, Windows Credential Manager, the Linux desktop keyring — else an owner-only file; key_store in config picks), looked in after the sources its api_key lists. Name the key: PROVIDER#KEY (a new name adds the key), PROVIDER# for one saved before keys had names. Prompted for, or read from stdin, without --value
 
 ```
 lexi providers api-key set [OPTIONS] <NAME>
@@ -372,12 +373,11 @@ lexi providers api-key set [OPTIONS] <NAME>
 
 - `<NAME>`
 - `-v, --value`
-- `--api` — A key for this API only (one of the provider's APIs); it gets its own api_key
-- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
+- `--name` — The key (or write PROVIDER#KEY)
 
 #### `providers api-key show`
 
-Show where the key is looked for, in order (the saved key among them), and the key in use, masked unless --reveal. Commands are run only with --reveal
+Show where a key is looked for, in order (the saved key among them), and the key, masked unless --reveal — every key, and the provider's variable, when none is named. Commands are run only with --reveal
 
 ```
 lexi providers api-key show [OPTIONS] <NAME>
@@ -385,38 +385,35 @@ lexi providers api-key show [OPTIONS] <NAME>
 
 - `<NAME>`
 - `-r, --reveal`
-- `--api` — The key this API uses
-- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
+- `--name` — The key (or write PROVIDER#KEY)
 
 #### `providers api-key remove`
 
-Delete the saved key. The sources api_key lists, and the config, are left as they are
+Delete a key's saved value (PROVIDER#KEY). The key, its sources and the config stay; to remove the key itself, use `providers keys rm`
 
 ```
 lexi providers api-key remove [OPTIONS] <NAME>
 ```
 
 - `<NAME>`
-- `--api` — The API's own key
-- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
+- `--name` — The key (or write PROVIDER#KEY)
 
 #### `providers api-key source list`
 
 Aliases: `ls`
 
-List where the key is looked for, in order (the saved key is last unless api_key places it)
+List where a key is looked for, in order (the saved key is last unless api_key places it) — every key's, when none is named
 
 ```
 lexi providers api-key source list [OPTIONS] <NAME>
 ```
 
 - `<NAME>`
-- `--api` — The sources of this API's own key
-- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
+- `--name` — The key (or write PROVIDER#KEY)
 
 #### `providers api-key source add`
 
-Add a place to look for the key: at the end of api_key, or first with --first (one already listed moves there). Lexi never writes to it
+Add a place to look for a key (PROVIDER#KEY): at the end of its api_key, or first with --first (one already listed moves there). Lexi never writes to it
 
 ```
 lexi providers api-key source add [OPTIONS] <--env <VAR>|--file <PATH>|--command <COMMAND>|--saved> <NAME>
@@ -428,14 +425,13 @@ lexi providers api-key source add [OPTIONS] <--env <VAR>|--file <PATH>|--command
 - `--command` — A program that prints the key, with its arguments, e.g. 'op read op://Private/OpenAI/credential' (run without a shell)
 - `--saved` — The saved key's place in the list
 - `--first` — Look here before the other sources
-- `--api` — For this API only (it gets its own api_key)
-- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
+- `--name` — The key (or write PROVIDER#KEY)
 
 #### `providers api-key source rm`
 
 Aliases: `del`, `remove`
 
-Stop looking in a place for the key (--saved takes out only its place in the list: the saved key is looked in last again)
+Stop looking in a place for a key (PROVIDER#KEY; --saved takes out only its place in the list: the saved key is looked in last again)
 
 ```
 lexi providers api-key source rm [OPTIONS] <--env <VAR>|--file <PATH>|--command <COMMAND>|--saved> <NAME>
@@ -446,14 +442,13 @@ lexi providers api-key source rm [OPTIONS] <--env <VAR>|--file <PATH>|--command 
 - `--file` — A file holding the key (relative to the Lexi folder; ~/ for your home folder)
 - `--command` — A program that prints the key, with its arguments, e.g. 'op read op://Private/OpenAI/credential' (run without a shell)
 - `--saved` — The saved key's place in the list
-- `--api` — From this API's own api_key
-- `--name` — One of the provider's named keys (or write PROVIDER#KEY)
+- `--name` — The key (or write PROVIDER#KEY)
 
 #### `providers keys list`
 
 Aliases: `ls`
 
-List the provider's keys — `default` (its unnamed key) and its named keys — with where each comes from and which one requests use
+List the provider's keys with where each comes from, which is the default (★), the provider's variable, and what a request that names no key uses
 
 ```
 lexi providers keys list <NAME>
@@ -463,10 +458,10 @@ lexi providers keys list <NAME>
 
 #### `providers keys add`
 
-Add a named key (another account's): save it with `providers api-key set PROVIDER#KEY`, or give it sources with `providers api-key source add PROVIDER#KEY …`
+Add a key without a value (PROVIDER#KEY, or PROVIDER KEY): save its value with `providers api-key set PROVIDER#KEY` (which also adds a new key), or give it sources with `providers api-key source add PROVIDER#KEY …`
 
 ```
-lexi providers keys add <NAME> <KEY>
+lexi providers keys add <NAME> [KEY]
 ```
 
 - `<NAME>`
@@ -474,10 +469,10 @@ lexi providers keys add <NAME> <KEY>
 
 #### `providers keys rename`
 
-Rename a named key (its saved key goes along)
+Rename a key — PROVIDER#OLD NEW, or PROVIDER OLD NEW (PROVIDER# is a key saved before keys had names) — its sources and saved key go along, and it stays the default if it was
 
 ```
-lexi providers keys rename <NAME> <OLD> <NEW>
+lexi providers keys rename <NAME> <OLD> [NEW]
 ```
 
 - `<NAME>`
@@ -488,10 +483,10 @@ lexi providers keys rename <NAME> <OLD> <NEW>
 
 Aliases: `del`, `remove`
 
-Remove a named key and its saved key
+Remove a key and its saved key (PROVIDER#KEY, or PROVIDER KEY). Any key can go: without the default, a request has to name a key until you choose another default
 
 ```
-lexi providers keys rm <NAME> <KEY>
+lexi providers keys rm <NAME> [KEY]
 ```
 
 - `<NAME>`
@@ -499,7 +494,7 @@ lexi providers keys rm <NAME> <KEY>
 
 #### `providers keys default`
 
-Show the key requests use when they name none, or set it (`default`: the unnamed key)
+Show the key requests use when they name none, or choose it (PROVIDER#KEY, or PROVIDER KEY)
 
 ```
 lexi providers keys default <NAME> [KEY]

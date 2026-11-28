@@ -60,36 +60,13 @@ Type `help` (or `?`) to see available commands, `help <command>` for details on 
 
 ## Setting Up API Keys
 
-Before you can send prompts, you need API keys from your providers. Lexi looks for a provider's key in the places its `api_key` (in `~/.lexi-cli/providers/providers-config.yaml`) lists, in order, then in the key Lexi saved for it.
+Before you can send prompts, a provider needs a key. There are two ways to give it one:
+- **Its environment variable** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`): a key for this shell, script or CI job, with nothing stored.
+- **A key of its own, with a name**, which Lexi saves for you or reads from where you keep it. A provider can have several: one per project or per account, each with its own usage and billing. You write a key after the provider with `#`: `openai#work`.
 
-### Where a key comes from
+A request uses the key it names (`lexi respond openai#work "…"`). One that names no key uses the provider's variable when it's set, else the provider's **default key** (★): its only key, or the one you choose with `lexi providers keys default`. With neither, the provider isn't ready, and the error says how to add a key.
 
-```yaml
-providers:
-  openai:
-    template: openai                   # api_key: [{env: OPENAI_API_KEY}] from the template
-  nvidia:
-    template: nvidia
-    api_key:
-      - file: ~/.config/secrets/nvidia.key   # a file holding the key
-  anthropic:
-    template: anthropic
-    api_key:
-      - command: [op, read, "op://Private/Anthropic/credential"]   # a password manager
-```
-
-| Source | Meaning |
-|---|---|
-| `env: VAR` | The environment variable `VAR` (`"${VAR}"` is the same, the older form). |
-| `file: PATH` | A file holding the key — yours (a Docker or Kubernetes secret, a key on an encrypted disk): Lexi never writes or deletes it. A relative path is under `~/.lexi-cli`, and `~/` is your home folder. |
-| `command: [PROGRAM, ARG, …]` | A program that prints the key: a password manager (`op read …`, `bw get password …`, `pass show …`) or an encrypted file (`sops -d …`, `age -d …`). It runs without a shell, from `~/.lexi-cli`, for up to 60 seconds (time for a Touch ID or unlock prompt); its output, trimmed, is the key. It runs once per command or Python process, and only when a request needs the key — listing providers or opening the app doesn't run it. Lexi won't run commands from a providers-config.yaml other users can change. |
-| `saved` | Where the key Lexi saved is looked in. Without it, the saved key is looked in last. |
-
-The first source that has a key wins. Only a *missing* key moves on to the next one: an unset variable, no file, an empty file, a command that prints nothing. A read error — an unreadable file, a command that fails — stops the lookup and is reported, so Lexi never quietly switches to a different key (and bills a different account). When no source has a key, the error lists every place Lexi looked.
-
-A single source can be written without the list (`api_key: {env: OPENAI_API_KEY}`). A literal key (`api_key: sk-…`) still works but isn't recommended.
-
-The shipped templates read the usual environment variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`), so setting it is enough to get started:
+### Using the environment variable
 
 ```bash
 export OPENAI_API_KEY="sk-..."
@@ -97,97 +74,97 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 export NVIDIA_API_KEY="nvapi-..."
 ```
 
-Add these to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.) to persist them. Apps opened from the macOS Dock or Finder don't see variables set in your shell profile. For the desktop app to use one, run `launchctl setenv OPENAI_API_KEY "…"` and reopen it, or save the key instead.
-
-To change the list without editing the file:
-
-```bash
-providers api-key source list openai                                     # where it's looked for, in order
-providers api-key source add openai --file ~/keys/openai --first         # look here first
-providers api-key source add openai --command 'op read op://Private/OpenAI/credential'
-providers api-key source add openai --saved --first                      # the saved key before the variable
-providers api-key source rm openai --env OPENAI_API_KEY                  # stop reading the variable
-```
+That's enough to start: the variable isn't one of the provider's keys and needs no setup. When it's set, it wins over the default key, so a script can use its own key without changing yours. A request that names a key still uses that key. Add the exports to your shell profile (`~/.zshrc`, `~/.bashrc`, etc.) to keep them. Apps opened from the macOS Dock or Finder don't see variables set in your shell profile. For the desktop app to use one, run `launchctl setenv OPENAI_API_KEY "…"` and reopen it, or save a key instead.
 
 ### Saving a key
 
-Lexi can save a key for you (the desktop app's **Setup Wizard**, on the Providers tab, does this too):
-
 ```bash
 # Inside the Lexi shell
-providers api-key set openai --value sk-...
-providers api-key set anthropic --value sk-ant-...
+providers api-key set openai#personal --value sk-...   # saves the key "personal" (and adds it)
+providers api-key set anthropic#main                   # asks for the key (not shown as you type)
 ```
 
-The key goes in your operating system's key store, encrypted with your login: the **macOS Keychain** (Lexi saves it with Apple's `security` tool, so there's no password prompt), **Windows Credential Manager**, or on Linux your **desktop keyring** (GNOME Keyring or KWallet, through the Secret Service). Where there's no key store (a server, a container, CI), it goes in a file only you can read (mode 0600), `providers/<provider>/api-key` in `~/.lexi-cli`. Keys saved by an older Lexi in that file are moved into the key store once, the first time a newer one runs. Over SSH the macOS Keychain is locked until you run `security unlock-keychain`. `lexi config set key_store file` keeps saved keys in the file instead (`system` insists on the key store; the default is `auto`), and the `LEXI_KEY_STORE` environment variable overrides the setting. Saving never changes providers-config.yaml or a file you listed. Because the saved key is looked in after the listed sources, a set environment variable wins over it — `set` says so when that happens (list `saved` first to change that). Without `--value`, the key is prompted for (or read from stdin).
+A key always has a name: letters, digits, `-` and `_`. Saving under a new name adds the key. The desktop app's **Setup Wizard**, on the Providers tab, does the same.
 
-A development build briefly kept keys in the system keychain; Lexi rewrites a `{keychain: …}` entry to `saved`, so save the key again. Lexi 0.3.0 listed its own key file in `api_key` (`{file: providers/<provider>/api-key}`); a newer Lexi takes it out of the list (or puts `saved` in its place), and the key keeps working.
+The key goes in your operating system's key store, encrypted with your login:
+- the **macOS Keychain** (Lexi saves it with Apple's `security` tool, so there's no password prompt);
+- **Windows Credential Manager**;
+- on Linux, your **desktop keyring** (GNOME Keyring or KWallet, through the Secret Service).
 
-### A different key for one API or model
+Where there's no key store (a server, a container, CI), it goes in a file only you can read (mode 0600) under `~/.lexi-cli/providers/<provider>/keys/`. Over SSH the macOS Keychain is locked until you run `security unlock-keychain`. `lexi config set key_store file` keeps saved keys in files instead (`system` insists on the key store; the default is `auto`), and the `LEXI_KEY_STORE` environment variable overrides the setting. Saving never changes a file you listed. Without `--value`, the key is prompted for (or read from stdin).
 
-A provider's APIs and configured models can each have their own `api_key`, which replaces the provider's:
+**Keys from before names.** A key saved by Lexi 0.3.0 or earlier has no name. It keeps working, as the provider's default while it's the only key, and you write it with nothing after the `#`: `openai#`. Give it a name whenever you like: `lexi providers keys rename openai# personal`. Nothing can create a new unnamed key.
+
+### Where a key comes from
+
+A key is its saved value, unless you tell Lexi where else to look. Each key can list places in `api_key` (in `~/.lexi-cli/providers/providers-config.yaml`), tried in order before its saved value:
 
 ```yaml
+providers:
   openai:
     template: openai
-    apis:
-      - api: image-generations
-        api_key: [saved]       # its own saved key: providers/openai/api-key-image-generations
+    keys:
+      personal: {}                                   # its saved key alone
+      work:
+        api_key:
+          - command: [op, read, "op://Work/OpenAI/credential"]   # a password manager
+      client-a:
+        api_key:
+          - file: ~/.config/secrets/client-a.key     # a file holding the key
+    default_key: personal
 ```
 
-`providers api-key set openai --api image-generations` saves a key for that API (in `providers/openai/api-key-image-generations`) and gives it its own `api_key` for you; `show`, `remove` and `source` take `--api` too. For a model, add `api_key:` to its entry in `providers/<provider>/configured-models.yaml` (a model has no saved key of its own: list where its key is).
+| Source | Meaning |
+|---|---|
+| `env: VAR` | The environment variable `VAR` (`"${VAR}"` is the same, the older form). |
+| `file: PATH` | A file holding the key — yours (a Docker or Kubernetes secret, a key on an encrypted disk): Lexi never writes or deletes it. A relative path is under `~/.lexi-cli`, and `~/` is your home folder. |
+| `command: [PROGRAM, ARG, …]` | A program that prints the key: a password manager (`op read …`, `bw get password …`, `pass show …`) or an encrypted file (`sops -d …`, `age -d …`). It runs without a shell, from `~/.lexi-cli`, for up to 60 seconds (time for a Touch ID or unlock prompt); its output, trimmed, is the key. It runs once per command or Python process, and only when a request needs the key — listing providers or opening the app doesn't run it. Lexi won't run commands from a providers-config.yaml other users can change. |
+| `saved` | Where the key's saved value is looked in. Without it, the saved value is looked in last. |
 
-### Several accounts at one provider (named keys)
+The first source that has a key wins. Only a *missing* key moves on to the next one: an unset variable, no file, an empty file, a command that prints nothing. A read error — an unreadable file, a command that fails — stops the lookup and is reported, so Lexi never quietly switches to a different key (and bills a different account). When no source has a key, the error lists every place Lexi looked.
 
-If you have more than one account at a provider (work and personal, one per
-client), give each its own **named key** and choose one per request:
+To change a key's list without editing the file:
 
 ```bash
-lexi providers api-key set openai#work          # saves (and adds) the key "work"
-lexi providers api-key set openai#personal
-lexi providers keys list openai                 # default (the unnamed key), work, personal
-
-lexi respond openai#work "Summarize this contract"   # billed to the work account
-lexi respond openai "Hi" --key personal              # the same, with --key
-lexi providers keys default openai work              # used when a request names none
+providers api-key source list openai                                          # every key's, in order
+providers api-key source add openai#work --command 'op read op://Work/OpenAI/credential'
+providers api-key source add openai#client-a --file ~/keys/client-a --first   # look here first
+providers api-key source add openai#work --saved --first                      # its saved value first
+providers api-key source rm openai#work --file ~/keys/old                     # stop looking there
 ```
 
-- `openai#work` works wherever a request names a provider: `respond`,
-  `generate`, `embed`, `upload`, `models hosted`, `providers status`, `jobs
-  status|wait`. Python takes `key="work"` (or `"openai#work"`).
-- `openai#default` is the provider's unnamed key.
-- A named key covers every API of the provider. An API's own `api_key`
-  applies only to the unnamed key.
-- A named key has its own sources and its own saved key, in the key store
-  as `openai#work`, or `providers/openai/keys/work` where there's no store.
-  `providers api-key show|remove|source …` take `openai#work` (or
-  `--name work`) the same way.
-- `providers keys add|rename|rm|default` manage them. In
-  providers-config.yaml they're `keys: {work: {api_key: [...]}}` and
-  `default_key: work`.
-- **A background job or an uploaded file belongs to the account that made
-  it:** check the job, or attach the file, with the same key. Lexi prints the
-  job command with it.
+### Managing keys
+
+```bash
+providers keys list openai                  # each key, ★ the default, and the variable
+providers keys add openai#work              # a key without a value yet
+providers keys rename openai#work projectx  # its sources and saved value go along
+providers keys default openai#projectx      # used when a request names no key
+providers keys rm openai#client-a           # the key and its saved value
+```
+
+- **Commands that change a key must name it** (`openai#work`, or `--name work`): `api-key set`, `api-key remove` and `api-key source add|rm` refuse a provider alone and show its keys. Commands that only look (`api-key show`, `api-key source list`, `providers status`) cover every key when you name none.
+- **Any key can be removed**, the default and the only one included. Remove the only key and the provider has none (not ready). Remove the default while others remain and a request has to name a key until you choose another default.
+- **A key covers every API of the provider:** chat, images and embeddings alike. To use a different key for some requests, name it in them.
+- `openai#work` works wherever a request names a provider: `respond`, `generate`, `embed`, `upload`, `models hosted`, `providers status`, `jobs status|wait`. Python takes `key="work"` (or `"openai#work"`).
+- **A background job or an uploaded file belongs to the account that made it:** check the job, or attach the file, with the same key. Lexi prints the job command with it.
 
 ### Checking API Key Status
 
-View whether a key is configured and where it comes from:
-
 ```bash
-providers api-key show openai          # Each place in order, and the key in use (masked; commands aren't run)
-providers api-key show openai --reveal # Shows the actual key value (runs a command source)
-providers api-key remove openai        # Deletes the saved key (the config is unchanged)
+providers api-key show openai              # every key: each place in order, and the key (masked; commands aren't run)
+providers api-key show openai#work --reveal # the actual key value (runs a command source)
+providers api-key remove openai#work       # deletes its saved value (the key and its sources stay)
 ```
 
-To check that the key actually works (makes a live call to the provider's models endpoint):
+To check that the keys actually work (a live call to the provider's models endpoint; nothing is generated or billed):
 
 ```bash
-providers status openai
+providers status openai          # every key, the variable if set, and what a request that names no key uses
+providers status openai#work     # one key
 ```
 
-`providers status` reports:
-- **Source** — Where the key was found: the variable or file (or none)
-- **Status** — `ready` (key works), `no api-key` (no key found), or `invalid api-key` (key was rejected by the provider)
+Each key's status is `ready` (the key works), `no api-key` (no key found) or `invalid api-key` (the provider rejected it), with where the key came from.
 
 ## Working with Prompts
 

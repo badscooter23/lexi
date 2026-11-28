@@ -308,10 +308,10 @@ providers:
 ### Step 2: Set Your API Key
 
 ```bash
-providers api-key set my-llm --value your-key-here
+providers api-key set my-llm#main --value your-key-here
 ```
 
-The key goes in an owner-only file (`providers/my-llm/api-key`), and the provider's `api_key` in `providers-config.yaml` gets that source. To read the key from an environment variable instead, set `api_key: [{env: MY_LLM_API_KEY}]` and export the variable. `api_key` is a list tried in order; see [Getting Started](getting-started.md#where-a-key-comes-from).
+Keys have names (`my-llm#main`); saving under a new one adds the key. It's saved in your OS key store (else an owner-only file, `providers/my-llm/keys/main`), never in `providers-config.yaml`. To read the key from an environment variable instead, give the key that source: `providers api-key source add my-llm#main --env MY_LLM_API_KEY`. A key's `api_key` is a list tried in order; see [Getting Started](getting-started.md#where-a-key-comes-from).
 
 ### Step 3: Test It
 

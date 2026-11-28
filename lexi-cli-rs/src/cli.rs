@@ -298,13 +298,13 @@ pub enum ProvidersCmd {
         #[arg(short, long)]
         table: bool,
     },
-    /// Check a provider's API key (live call to its models endpoint).
+    /// Check a provider's API keys (a live call to its models endpoint; nothing is generated or billed): with a key named (PROVIDER#KEY), that key; without, every key and the provider's variable, and what a request that names no key would use.
     Status {
         name: String,
-        /// Print {provider, status, source} as JSON.
+        /// Print the result as JSON.
         #[arg(short, long)]
         raw: bool,
-        /// Check this named key (or write PROVIDER#KEY).
+        /// Check this key (or write PROVIDER#KEY).
         #[arg(long, value_name = "KEY")]
         key: Option<String>,
     },
@@ -317,9 +317,17 @@ pub enum ProvidersCmd {
         /// The model used when none is given.
         #[arg(long = "default_model", visible_alias = "default-model")]
         default_model: String,
-        /// API key (saved in the OS key store — macOS Keychain, Windows Credential Manager, the desktop keyring — else an owner-only key file; never the config).
-        #[arg(long = "api_key", visible_alias = "api-key")]
+        /// API key (saved in the OS key store — macOS Keychain, Windows Credential Manager, the desktop keyring — else an owner-only key file; never the config), as the key --key-name names.
+        #[arg(long = "api_key", visible_alias = "api-key", requires = "key_name")]
         api_key: Option<String>,
+        /// The name of the key --api-key saves (keys have names: PROVIDER#NAME).
+        #[arg(
+            long = "key_name",
+            visible_alias = "key-name",
+            value_name = "NAME",
+            requires = "api_key"
+        )]
+        key_name: Option<String>,
         /// API definition the provider speaks.
         #[arg(long, default_value = "chat-completions")]
         api: String,
@@ -331,14 +339,16 @@ pub enum ProvidersCmd {
         )]
         hosted_models: String,
     },
-    /// Manage a provider's API key: the key Lexi saves, and the other places it's looked for first (api_key in providers-config.yaml: environment variables, your files, commands).
+    /// Manage a provider's API keys, each named PROVIDER#NAME (PROVIDER# is a key saved before keys had names): the key Lexi saves, and the other places it's looked for first (api_key in providers-config.yaml: environment variables, your files, commands). Commands that change a key must name it; show and source list without a name cover every key.
     #[command(name = "api-key")]
     ApiKey {
         #[command(subcommand)]
         cmd: ApiKeyCmd,
     },
-    /// A provider's keys for separate accounts: list, add, rename, remove, and
-    /// choose the default. A request picks one with --key KEY or PROVIDER#KEY.
+    /// A provider's keys (per project or per account): list, add, rename,
+    /// remove, and choose the default. A request picks one with PROVIDER#KEY
+    /// (or --key KEY); one that names none uses the provider's variable when
+    /// it's set, else the default key.
     Keys {
         #[command(subcommand)]
         cmd: KeysCmd,
@@ -399,61 +409,58 @@ pub enum ProviderApiCmd {
 
 #[derive(Debug, Subcommand)]
 pub enum KeysCmd {
-    /// List the provider's keys — `default` (its unnamed key) and its named
-    /// keys — with where each comes from and which one requests use.
+    /// List the provider's keys with where each comes from, which is the
+    /// default (★), the provider's variable, and what a request that names
+    /// no key uses.
     #[command(visible_alias = "ls")]
     List { name: String },
-    /// Add a named key (another account's): save it with `providers api-key
-    /// set PROVIDER#KEY`, or give it sources with `providers api-key source
-    /// add PROVIDER#KEY …`.
-    Add { name: String, key: String },
-    /// Rename a named key (its saved key goes along).
+    /// Add a key without a value (PROVIDER#KEY, or PROVIDER KEY): save its
+    /// value with `providers api-key set PROVIDER#KEY` (which also adds a new
+    /// key), or give it sources with `providers api-key source add
+    /// PROVIDER#KEY …`.
+    Add { name: String, key: Option<String> },
+    /// Rename a key — PROVIDER#OLD NEW, or PROVIDER OLD NEW (PROVIDER# is a
+    /// key saved before keys had names) — its sources and saved key go along,
+    /// and it stays the default if it was.
     Rename {
         name: String,
         old: String,
-        new: String,
+        new: Option<String>,
     },
-    /// Remove a named key and its saved key.
+    /// Remove a key and its saved key (PROVIDER#KEY, or PROVIDER KEY). Any
+    /// key can go: without the default, a request has to name a key until you
+    /// choose another default.
     #[command(visible_aliases = ["del", "remove"])]
-    Rm { name: String, key: String },
-    /// Show the key requests use when they name none, or set it (`default`:
-    /// the unnamed key).
+    Rm { name: String, key: Option<String> },
+    /// Show the key requests use when they name none, or choose it
+    /// (PROVIDER#KEY, or PROVIDER KEY).
     Default { name: String, key: Option<String> },
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ApiKeyCmd {
-    /// Save an API key as the provider's saved key (in the OS key store — macOS Keychain, Windows Credential Manager, the Linux desktop keyring — else an owner-only file, providers/<name>/api-key; key_store in config picks), looked in after the sources api_key lists. Prompted for, or read from stdin, without --value.
+    /// Save a key's value as its saved key (in the OS key store — macOS Keychain, Windows Credential Manager, the Linux desktop keyring — else an owner-only file; key_store in config picks), looked in after the sources its api_key lists. Name the key: PROVIDER#KEY (a new name adds the key), PROVIDER# for one saved before keys had names. Prompted for, or read from stdin, without --value.
     Set {
         name: String,
         #[arg(short, long)]
         value: Option<String>,
-        /// A key for this API only (one of the provider's APIs); it gets its own api_key.
-        #[arg(long)]
-        api: Option<String>,
-        /// One of the provider's named keys (or write PROVIDER#KEY).
+        /// The key (or write PROVIDER#KEY).
         #[arg(long = "name", value_name = "KEY")]
         key: Option<String>,
     },
-    /// Show where the key is looked for, in order (the saved key among them), and the key in use, masked unless --reveal. Commands are run only with --reveal.
+    /// Show where a key is looked for, in order (the saved key among them), and the key, masked unless --reveal — every key, and the provider's variable, when none is named. Commands are run only with --reveal.
     Show {
         name: String,
         #[arg(short, long)]
         reveal: bool,
-        /// The key this API uses.
-        #[arg(long)]
-        api: Option<String>,
-        /// One of the provider's named keys (or write PROVIDER#KEY).
+        /// The key (or write PROVIDER#KEY).
         #[arg(long = "name", value_name = "KEY")]
         key: Option<String>,
     },
-    /// Delete the saved key. The sources api_key lists, and the config, are left as they are.
+    /// Delete a key's saved value (PROVIDER#KEY). The key, its sources and the config stay; to remove the key itself, use `providers keys rm`.
     Remove {
         name: String,
-        /// The API's own key.
-        #[arg(long)]
-        api: Option<String>,
-        /// One of the provider's named keys (or write PROVIDER#KEY).
+        /// The key (or write PROVIDER#KEY).
         #[arg(long = "name", value_name = "KEY")]
         key: Option<String>,
     },
@@ -466,18 +473,15 @@ pub enum ApiKeyCmd {
 
 #[derive(Debug, Subcommand)]
 pub enum KeySourceCmd {
-    /// List where the key is looked for, in order (the saved key is last unless api_key places it).
+    /// List where a key is looked for, in order (the saved key is last unless api_key places it) — every key's, when none is named.
     #[command(visible_alias = "ls")]
     List {
         name: String,
-        /// The sources of this API's own key.
-        #[arg(long)]
-        api: Option<String>,
-        /// One of the provider's named keys (or write PROVIDER#KEY).
+        /// The key (or write PROVIDER#KEY).
         #[arg(long = "name", value_name = "KEY")]
         key: Option<String>,
     },
-    /// Add a place to look for the key: at the end of api_key, or first with --first (one already listed moves there). Lexi never writes to it.
+    /// Add a place to look for a key (PROVIDER#KEY): at the end of its api_key, or first with --first (one already listed moves there). Lexi never writes to it.
     Add {
         name: String,
         #[command(flatten)]
@@ -485,23 +489,17 @@ pub enum KeySourceCmd {
         /// Look here before the other sources.
         #[arg(long)]
         first: bool,
-        /// For this API only (it gets its own api_key).
-        #[arg(long)]
-        api: Option<String>,
-        /// One of the provider's named keys (or write PROVIDER#KEY).
+        /// The key (or write PROVIDER#KEY).
         #[arg(long = "name", value_name = "KEY")]
         key: Option<String>,
     },
-    /// Stop looking in a place for the key (--saved takes out only its place in the list: the saved key is looked in last again).
+    /// Stop looking in a place for a key (PROVIDER#KEY; --saved takes out only its place in the list: the saved key is looked in last again).
     #[command(visible_aliases = ["del", "remove"])]
     Rm {
         name: String,
         #[command(flatten)]
         source: KeySourceArg,
-        /// From this API's own api_key.
-        #[arg(long)]
-        api: Option<String>,
-        /// One of the provider's named keys (or write PROVIDER#KEY).
+        /// The key (or write PROVIDER#KEY).
         #[arg(long = "name", value_name = "KEY")]
         key: Option<String>,
     },

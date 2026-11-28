@@ -1,6 +1,6 @@
 # API Key Storage — Design
 
-**Status:** accepted · 2026-11-25 · steps 1 (source model), 2 (macOS store) and 3 (Windows and Linux stores) implemented · §11 named keys implemented, revised by §12 (proposed)
+**Status:** accepted · 2026-11-25 · steps 1 (source model), 2 (macOS store) and 3 (Windows and Linux stores) implemented · §11 named keys, revised by §12 (every key has a name): host, CLI and Python implemented; desktop with step 4
 **Scope:** where Lexi reads API keys from and where it saves them: the CLI, the
 Python library and the desktop app (all via `lexi-host`).
 **Replaces:** the 0.3.0 rule that a saved key goes into "the first file
@@ -502,9 +502,10 @@ Decided 2026-11-28:
 
 ## 12. Revision: every key has a name
 
-**Status:** proposed · 2026-11-28 · revises §11 (not yet released, so
-nothing depends on the §11 behaviour). The rules in §12.2 were decided
-2026-11-28, and so were the points in §12.9.
+**Status:** accepted · 2026-11-28 · revises §11 (not yet released, so
+nothing depends on the §11 behaviour). The rules in §12.2 and the points in
+§12.9 were decided 2026-11-28. Implemented: host, CLI and Python (rollout
+step 1, §12.8); the desktop with step 4.
 
 ### 12.1 Why
 

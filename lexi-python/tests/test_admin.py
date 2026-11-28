@@ -19,37 +19,47 @@ def test_providers_lifecycle(home):
     }
     assert row["template"] == "openai" and row["apis"] == ["responses", "image-generations", "embeddings"]
 
-    assert lexi.providers.add("mine", "https://x.example/v1", "m1", api_key="sk-abcdefghij") == {
-        "added": "mine"
-    }
+    # A key needs a name.
+    with pytest.raises(lexi.LexiError, match="key_name"):
+        lexi.providers.add("nameless", "https://x.example/v1", "m1", api_key="sk-x")
+    assert lexi.providers.add(
+        "mine", "https://x.example/v1", "m1", api_key="sk-abcdefghij", key_name="main"
+    ) == {"added": "mine"}
     mine = next(p for p in lexi.providers.list() if p["name"] == "mine")
     assert mine["api"] == "chat-completions" and mine["key_source"] == "saved"
     assert lexi.models.default("mine")["default_model"] == "m1"
-    assert (home / "providers" / "mine" / "api-key").read_text().strip() == "sk-abcdefghij"
+    assert (home / "providers" / "mine" / "keys" / "main").read_text().strip() == "sk-abcdefghij"
 
-    assert lexi.providers.show_key("mine")["key"] == "sk-a*****ghij"
-    assert lexi.providers.show_key("mine", reveal=True)["key"] == "sk-abcdefghij"
+    assert lexi.providers.show_key("mine#main")["key"] == "sk-a*****ghij"
+    assert lexi.providers.show_key("mine", key_name="main", reveal=True)["key"] == "sk-abcdefghij"
+    # Named none: every key.
+    every = lexi.providers.show_key("mine")
+    assert [k["label"] for k in every["keys"]] == ["#main"]
+    assert every["default_key"] == "main"
     assert lexi.providers.rename("mine", "yours") == {"renamed": "mine", "to": "yours"}
-    assert lexi.providers.remove_key("yours") == {"removed": True}
+    with pytest.raises(lexi.LexiError, match="name the key"):
+        lexi.providers.remove_key("yours")
+    assert lexi.providers.remove_key("yours", key_name="main") == {"removed": True}
     # The saved key followed the rename.
-    assert lexi.providers.show_key("yours") == {
-        "provider": "yours", "api": None, "own": True,
+    assert lexi.providers.show_key("yours#main") == {
+        "provider": "yours", "key_name": "main", "label": "#main",
         "source": None, "from": None, "key": None, "error": None,
         "sources": [{
-            "kind": "saved", "from": "providers/yours/api-key",
+            "kind": "saved", "from": "providers/yours/keys/main",
             "state": "missing", "note": "none saved",
         }],
-        "save_to": "providers/yours/api-key",
+        "save_to": "providers/yours/keys/main",
         "store": {"kind": "file", "available": True, "locked": False},
         "env": None,
-        "key_name": None,
     }
-    saved = lexi.providers.set_key("yours", "k2")
+    with pytest.raises(lexi.LexiError, match="name the key"):
+        lexi.providers.set_key("yours", "k2")
+    saved = lexi.providers.set_key("yours#main", "k2")
     assert saved == {
-        "provider": "yours", "location": "providers/yours/api-key", "store": "file",
-        "added": False, "used": "providers/yours/api-key", "key_name": None,
+        "provider": "yours", "location": "providers/yours/keys/main", "store": "file",
+        "added": False, "used": "providers/yours/keys/main", "key_name": "main",
     }
-    assert lexi.providers.show_key("yours", reveal=True)["key"] == "k2"
+    assert lexi.providers.show_key("yours#main", reveal=True)["key"] == "k2"
     assert lexi.providers.remove("yours") == {"removed": "yours"}
     assert "yours" not in [p["name"] for p in lexi.providers.list()]
 
@@ -63,14 +73,19 @@ def test_provider_status_and_hosted_models(home):
     m = Mock()
     try:
         m.routes[("GET", "/models")] = ok({"data": [{"id": "m-a"}, {"id": "m-b"}]})
-        lexi.providers.add("mock", m.url, "m-a", api_key="k")
-        assert lexi.providers.status("mock") == {
-            "provider": "mock", "status": "ready", "source": "saved",
-            "from": "providers/mock/api-key",
+        lexi.providers.add("mock", m.url, "m-a", api_key="k", key_name="main")
+        assert lexi.providers.status("mock#main") == {
+            "provider": "mock", "key": "mock#main", "status": "ready", "source": "saved",
+            "from": "providers/mock/keys/main", "verified": True, "reason": None,
         }
+        every = lexi.providers.status("mock")
+        assert [(k["key"], k["status"]) for k in every["keys"]] == [("mock#main", "ready")]
+        assert every["uses"] == {"key": "main"} and every["ready"] is True
         assert [x["id"] for x in lexi.models.hosted("mock")] == ["m-a", "m-b"]
-        lexi.providers.remove_key("mock")
-        assert lexi.providers.status("mock")["status"] == "no api-key"
+        lexi.providers.remove_key("mock#main")
+        assert lexi.providers.status("mock#main")["status"] == "no api-key"
+        lexi.providers.delete_key("mock", "main")
+        assert lexi.providers.status("mock")["reason"] == "no key"
     finally:
         m.server.shutdown()
 
@@ -259,62 +274,63 @@ def test_provider_upgrade_and_apis(home):
         lexi.providers.remove_api("anthropic", "messages")
 
 
-def test_key_sources_and_per_api_keys(home, monkeypatch):
+def test_a_key_from_before_names_is_written_with_a_bare_hash(home, monkeypatch):
     lexi.providers.add("mine", "https://x.example/v1", "m1")
     monkeypatch.setenv("LEXI_TEST_MINE_KEY", "from-env")
     cfg = home / "providers" / "providers-config.yaml"
     cfg.write_text(cfg.read_text().replace(
         "  mine:\n", "  mine:\n    api_key: [{env: LEXI_TEST_MINE_KEY}, {file: providers/mine/api-key}]\n", 1))
-    info = lexi.providers.show_key("mine", reveal=True)
+    info = lexi.providers.show_key("mine#", reveal=True)
     assert (info["source"], info["from"], info["key"]) == ("env", "$LEXI_TEST_MINE_KEY", "from-env")
-    assert [s["state"] for s in info["sources"]] == ["used", "not checked"]
+    assert info["label"] == "#"
 
-    # Saved (the listed Lexi key file became the saved key), but the
-    # variable comes first and is set.
-    saved = lexi.providers.set_key("mine", "from-file")
+    # Saved, but the variable comes first in its list and is set.
+    saved = lexi.providers.set_key("mine#", "from-file")
     assert (saved["location"], saved["used"]) == ("providers/mine/api-key", "$LEXI_TEST_MINE_KEY")
     monkeypatch.delenv("LEXI_TEST_MINE_KEY")
-    assert lexi.providers.show_key("mine", reveal=True)["key"] == "from-file"
+    assert lexi.providers.show_key("mine", key_name="", reveal=True)["key"] == "from-file"
 
-    # A key for one API only.
-    assert not lexi.providers.show_key("mine", api="chat-completions")["own"]
-    lexi.providers.set_key("mine", "chat-only", api="chat-completions")
-    own = lexi.providers.show_key("mine", api="chat-completions", reveal=True)
-    assert own["own"] and own["key"] == "chat-only"
-    assert own["sources"] == [{
-        "kind": "saved", "from": "providers/mine/api-key-chat-completions", "state": "used",
-    }]
+    # Renamed, it's a named key like the rest.
+    lexi.providers.rename_key("mine", "", "personal")
+    assert lexi.providers.show_key("mine#personal", reveal=True)["key"] == "from-file"
+    with pytest.raises(lexi.LexiError, match="no unnamed key"):
+        lexi.providers.show_key("mine#")
 
 
 def test_key_sources_can_be_listed_added_and_removed(home, tmp_path):
-    listed = lexi.providers.key_sources("openai")
+    every = lexi.providers.key_sources("openai")
+    assert every["keys"] == [] and every["variable"]["name"] == "OPENAI_API_KEY"
+    lexi.providers.add_key("openai", "work")
+    listed = lexi.providers.key_sources("openai#work")
     assert [(r["kind"], r["from"]) for r in listed["sources"]] == [
-        ("env", "$OPENAI_API_KEY"), ("saved", "providers/openai/api-key"),
+        ("saved", "providers/openai/keys/work"),
     ]
-    assert listed["sources"][1]["implicit"] is True
+    assert listed["sources"][0]["implicit"] is True
 
     key = tmp_path / "openai.key"
     key.write_text("from-my-file\n")
-    after = lexi.providers.add_key_source("openai", file=str(key), first=True)
+    with pytest.raises(lexi.LexiError, match="name the key"):
+        lexi.providers.add_key_source("openai", file=str(key))
+    after = lexi.providers.add_key_source("openai#work", file=str(key), first=True)
     assert after["sources"][0] == {"kind": "file", "from": str(key), "value": {"file": str(key)}}
-    assert lexi.providers.show_key("openai", reveal=True)["key"] == "from-my-file"
+    assert lexi.providers.show_key("openai#work", reveal=True)["key"] == "from-my-file"
 
     cmd = [sys.executable, "-c", "print('from-cmd')"]
-    after = lexi.providers.add_key_source("openai", command=cmd, first=True)
+    after = lexi.providers.add_key_source("openai", command=cmd, first=True, key_name="work")
     assert after["sources"][0]["value"] == {"command": cmd}
     # Listing doesn't run it; revealing does.
-    assert lexi.providers.show_key("openai")["sources"][0]["state"] == "not run"
-    assert lexi.providers.show_key("openai", reveal=True)["key"] == "from-cmd"
+    assert lexi.providers.show_key("openai#work")["sources"][0]["state"] == "not run"
+    assert lexi.providers.show_key("openai#work", reveal=True)["key"] == "from-cmd"
 
-    assert lexi.providers.remove_key_source("openai", command=cmd) == {
+    assert lexi.providers.remove_key_source("openai#work", command=cmd) == {
         "provider": "openai", "removed": True,
     }
-    assert lexi.providers.remove_key_source("openai", file=str(key))["removed"] is True
-    assert lexi.providers.remove_key_source("openai", file=str(key))["removed"] is False
+    assert lexi.providers.remove_key_source("openai#work", file=str(key))["removed"] is True
+    assert lexi.providers.remove_key_source("openai#work", file=str(key))["removed"] is False
     with pytest.raises(ValueError, match="exactly one"):
-        lexi.providers.add_key_source("openai", env="A", file="b")
+        lexi.providers.add_key_source("openai#work", env="A", file="b")
     with pytest.raises(lexi.LexiError):
-        lexi.providers.add_key_source("openai", command=[])
+        lexi.providers.add_key_source("openai#work", command=[])
 
 
 def test_hosted_schema_shows_how_the_listing_is_fetched(home):
@@ -326,7 +342,7 @@ def test_hosted_schema_shows_how_the_listing_is_fetched(home):
         lexi.models.hosted_schema("nope")
 
 
-def test_named_keys_pick_the_account(home, monkeypatch):
+def test_keys_pick_the_account_or_project(home, monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     lexi.providers.list()  # seed
     assert lexi.providers.add_key("openai", "work") == {
@@ -338,23 +354,32 @@ def test_named_keys_pick_the_account(home, monkeypatch):
     assert (saved["key_name"], saved["location"]) == ("personal", "providers/openai/keys/personal")
     assert lexi.providers.show_key("openai#personal", reveal=True)["key"] == "sk-personal"
     assert lexi.providers.show_key("openai", key_name="work", reveal=True)["key"] == "sk-work"
-    assert [k["name"] for k in lexi.providers.keys("openai")["keys"]] == ["default", "work", "personal"]
+    keys = lexi.providers.keys("openai")
+    # A fresh install has no unnamed key; the variable isn't one.
+    assert [k["label"] for k in keys["keys"]] == ["#work", "#personal"]
+    assert (keys["default_key"], keys["reason"]) == (None, "no default key")
 
     # A request picks a key with key= or provider#key; an unknown one is an error.
     assert lexi.prepare("openai", "hi", key="work")["provider"] == "openai"
     assert lexi.prepare("openai#personal", "hi")["provider"] == "openai"
-    with pytest.raises(lexi.LexiError, match="no API key"):
-        lexi.prepare("openai", "hi")  # the unnamed key has none
+    with pytest.raises(lexi.LexiError, match="several keys and no default"):
+        lexi.prepare("openai", "hi")
     with pytest.raises(lexi.LexiError, match='no key named "nope"'):
         lexi.prepare("openai", "hi", key="nope")
     with pytest.raises(lexi.LexiError, match="name different keys"):
         lexi.prepare("openai#work", "hi", key="personal")
+    with pytest.raises(lexi.LexiError, match="isn't a key name"):
+        lexi.prepare("openai#default", "hi")
 
     lexi.providers.set_default_key("openai", "work")
     assert lexi.prepare("openai", "hi")["provider"] == "openai"  # now uses work
     assert lexi.providers.keys("openai")["default_key"] == "work"
+    # The provider's variable, when set, wins over the default.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    assert lexi.providers.keys("openai")["uses"] == {"variable": "OPENAI_API_KEY"}
+    monkeypatch.delenv("OPENAI_API_KEY")
     lexi.providers.rename_key("openai", "work", "acme")
     assert lexi.providers.keys("openai")["default_key"] == "acme"
     assert lexi.providers.delete_key("openai", "acme") == {"provider": "openai", "removed": "acme"}
-    lexi.providers.set_default_key("openai", None)
-    assert lexi.providers.keys("openai")["default_key"] == "default"
+    # One key left: it's the default.
+    assert lexi.providers.keys("openai")["default_key"] == "personal"

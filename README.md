@@ -76,8 +76,8 @@ Windows: download `lexi-0.3.0-windows-x86_64.zip`, unzip it, and move
 Then give Lexi a key and try it:
 
 ```bash
-lexi providers api-key set anthropic # asks for the key (not shown as you type)
-lexi providers status anthropic      # checks the key (lists models; nothing is billed)
+lexi providers api-key set anthropic#main # asks for the key (not shown as you type)
+lexi providers status anthropic           # checks it (lists models; nothing is billed)
 lexi respond anthropic "Explain quicksort in one paragraph"
 lexi                                 # the interactive shell
 ```
@@ -115,19 +115,24 @@ See [Development](#development) for tests and linting.
 
 ## API keys
 
-Each provider looks for its key in order: an environment variable
-(`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`), then the key Lexi
-saved. `lexi providers api-key set <provider>` (or the desktop app's Setup
-Wizard) saves the key in your OS key store — the macOS Keychain, Windows Credential
+A provider gets its key from its environment variable (`OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`) or from a key of its own. Keys have
+names, written after the provider: `openai#work`. A provider can have several,
+one per project or account, each with its own usage and billing.
+
+`lexi providers api-key set openai#work` (or the desktop app's Setup Wizard)
+saves a key in your OS key store — the macOS Keychain, Windows Credential
 Manager or the Linux desktop keyring (elsewhere, an owner-only file under
-`~/.lexi-cli/providers/<provider>/`) — never in `providers-config.yaml`; `providers api-key show <provider>` lists
-where Lexi looked and which key is used. Files of your own and password
-managers (`command: [op, read, …]`) can be added with
-`providers api-key source add`. Several accounts at one provider each get a
-**named key** — `lexi respond openai#work "…"` or `--key work` (`providers
-keys list|add|rename|rm|default`) — see
-[Getting Started](docs/getting-started.md#where-a-key-comes-from). The CLI, the desktop app and the
-Python library all read the same places.
+`~/.lexi-cli/providers/<provider>/keys/`) — never in `providers-config.yaml`.
+A key can also come from your own files and password managers (`command: [op,
+read, …]`), added with `providers api-key source add`.
+
+A request uses the key it names (`lexi respond openai#work "…"`, or `--key
+work`). One that names no key uses the variable when it's set, else the
+provider's default key. `providers keys list|add|rename|rm|default` manage the
+keys, and `providers status openai` checks them all. See
+[Getting Started](docs/getting-started.md#setting-up-api-keys). The CLI, the
+desktop app and the Python library all read the same places.
 
 ## Core Commands
 

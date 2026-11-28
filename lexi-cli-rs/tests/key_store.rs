@@ -16,12 +16,17 @@ fn json(o: &std::process::Output) -> Value {
 #[test]
 fn tests_never_use_the_real_keychain() {
     let home = seeded_home();
+    assert!(
+        lexi_out(home.path(), &["providers", "keys", "add", "openai#work"])
+            .status
+            .success()
+    );
     let info = json(&lexi_out(
         home.path(),
-        &["--json", "providers", "api-key", "show", "openai"],
+        &["--json", "providers", "api-key", "show", "openai#work"],
     ));
     assert_eq!(info["store"]["kind"], "file", "{info}");
-    assert_eq!(info["save_to"], "providers/openai/api-key");
+    assert_eq!(info["save_to"], "providers/openai/keys/work");
 }
 
 #[test]

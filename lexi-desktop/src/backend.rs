@@ -573,6 +573,7 @@ fn unseen_notes(text: &str, seen: Option<&str>, current: &str) -> Vec<Value> {
 /// help. Commands (`command:` sources) aren't run here.
 fn provider_credentials(name: &str) -> Value {
     let cfg = lexi_host::admin::provider_config(name).unwrap_or(Value::Null);
+    let target = panel_key(name);
     let setup = cfg.get("setup").cloned().unwrap_or(Value::Null);
     let mut out = json!({
         "name": name,
@@ -580,7 +581,13 @@ fn provider_credentials(name: &str) -> Value {
         "setup": setup,
         "url": cfg.get("url"),
     });
-    match lexi_host::admin::api_key_info(name, None, false) {
+    let info = match &target {
+        Some(t) => lexi_host::admin::api_key_info(t, false),
+        None => Err(lexi_host::HostError::MissingApiKey(format!(
+            "{name} has no key: add one with `lexi providers api-key set {name}#NAME`"
+        ))),
+    };
+    match info {
         Ok(info) => {
             let env = info.get("env").and_then(Value::as_str);
             for k in [
@@ -641,6 +648,27 @@ fn startup_seen() -> Result<Value, String> {
     Ok(json!({ "seen_version": APP_VERSION }))
 }
 
+/// The key the API key panel and the wizard work on until they show every
+/// key (`docs/key-storage-design.md` §12.6): the provider's default key, else
+/// its first; `None` when it has none (written `provider#key`).
+fn panel_key(provider: &str) -> Option<String> {
+    let keys = config::key_names(provider).ok()?;
+    let name = keys["default_key"]
+        .as_str()
+        .map(String::from)
+        .or_else(|| keys["keys"][0]["name"].as_str().map(String::from))?;
+    Some(format!("{provider}#{name}"))
+}
+
+/// The key a panel action works on, or the "add a key" refusal.
+fn panel_target(provider: &str) -> Result<String, String> {
+    panel_key(provider).ok_or_else(|| {
+        format!(
+            "{provider} has no key yet: add one with `lexi providers api-key set {provider}#NAME` (the app's key screen names keys soon)"
+        )
+    })
+}
+
 /// `POST /api/providers/api-key` `{action: show|set|remove, provider,
 /// reveal?, value?}` — a provider's API key: `set` saves it as the saved key
 /// (in the OS key store, else the provider's owner-only key file; listed
@@ -661,7 +689,7 @@ fn provider_api_key(body: Value) -> Result<Value, String> {
         "show" => {
             let mut creds = provider_credentials(provider);
             if body.get("reveal").and_then(Value::as_bool) == Some(true) {
-                let info = lexi_host::admin::api_key_info(provider, None, true)
+                let info = lexi_host::admin::api_key_info(&panel_target(provider)?, true)
                     .map_err(|e| e.to_string())?;
                 creds["key"] = info["key"].clone();
             }
@@ -669,11 +697,13 @@ fn provider_api_key(body: Value) -> Result<Value, String> {
         }
         "set" => {
             let value = body.get("value").and_then(Value::as_str).unwrap_or("");
-            let saved = config::set_api_key(provider, None, value).map_err(|e| e.to_string())?;
+            let saved =
+                config::set_api_key(&panel_target(provider)?, value).map_err(|e| e.to_string())?;
             result = saved_value(&saved);
         }
         "remove" => {
-            let removed = config::remove_api_key(provider, None).map_err(|e| e.to_string())?;
+            let removed =
+                config::remove_api_key(&panel_target(provider)?).map_err(|e| e.to_string())?;
             result["removed"] = json!(removed);
         }
         other => return Err(format!("unknown api-key action {other:?}")),

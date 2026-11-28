@@ -301,8 +301,7 @@ pub fn resolve_model(
         )));
     }
 
-    // Per-model overrides of the API's auth/request/response blocks, and the
-    // model's own api_key (which replaces the API's / provider's).
+    // Per-model overrides of the API's auth/request/response blocks.
     if let Some(meta) = configured
         .iter()
         .find(|x| x.id == model)
@@ -320,11 +319,12 @@ pub fn resolve_model(
                     cfg.insert(key.to_string(), merged);
                 }
             }
-            if let Some(k) = meta.get("api_key") {
-                cfg.insert("api_key".into(), k.clone());
+            // Keys belong to the provider (docs/key-storage-design.md §12.2
+            // rule 6): a model's own api_key isn't used, and the lookup says so.
+            if meta.get("api_key").is_some() {
                 cfg.insert(
-                    config::KEY_SCOPE.into(),
-                    serde_json::json!({ "model": format!("providers/{provider}/configured-models.yaml") }),
+                    config::OWN_API_KEY.into(),
+                    Value::from(format!("the model {model}")),
                 );
             }
         }

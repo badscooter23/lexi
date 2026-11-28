@@ -169,7 +169,7 @@ mod tests {
             }
             false
         });
-        run("providers api-key set openai", "c2", emit).await;
+        run("providers api-key set openai#work", "c2", emit).await;
         assert!(answer.join().unwrap(), "the command never asked");
         let got = events.lock().unwrap().clone();
         assert!(got

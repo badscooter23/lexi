@@ -92,7 +92,8 @@ pub fn ensure_home_in(home: &Path) -> Result<Vec<PathBuf>, HostError> {
         created.push(aliases);
     }
     crate::config::upgrade_key_sources(home);
-    let moved = crate::config::move_saved_keys(home);
+    let mut moved = crate::config::move_saved_keys(home);
+    moved.extend(crate::config::adopt_own_keys(home));
     if !moved.is_empty() {
         if let Ok(mut n) = notices().lock() {
             n.extend(moved);

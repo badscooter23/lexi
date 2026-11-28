@@ -71,7 +71,8 @@ pub use config::with_request_timeout;
 pub use embed::{embed, EmbedRequest};
 pub use generate::{generate_images_text, generate_images_with_effective, SavedArtifact};
 pub use hosted::{
-    cached_catalog, check_api_key, fetch_hosted_models, fetch_hosted_models_with, KeyStatus,
+    cached_catalog, check_api_key, check_provider_keys, fetch_hosted_models,
+    fetch_hosted_models_with, KeyStatus,
 };
 
 /// A config scalar as query-string text (`1000`, `"abc"` → `abc`).
