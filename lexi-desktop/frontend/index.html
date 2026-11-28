@@ -158,6 +158,24 @@
       color: var(--text);
       background: var(--card);
     }
+    .tab.dragging { opacity: 0.5; }
+    .tab-add {
+      align-self: center;
+      margin-left: 2px;
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      border: 1px dashed var(--border);
+      background: none;
+      color: var(--muted);
+      font: inherit;
+      font-size: 1.1rem;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .tab-add:hover { color: var(--text); border-style: solid; }
+    .tab-add.none-hidden { opacity: 0.55; }
+    .tab-menu .hint { padding: 6px 10px; max-width: 260px; font-size: 0.82rem; }
     .subtabs {
       display: flex;
       gap: 6px;
@@ -2197,6 +2215,7 @@
         <div class="tab" data-tab="apis">APIs</div>
         <div class="tab" data-tab="cli">CLI</div>
         <div class="tab" data-tab="configure">Configure</div>
+        <button type="button" class="tab-add" id="tabAddBtn" data-cmd="none" aria-label="Show a hidden tab" data-tip="Show a hidden tab">+</button>
       </div>
     <div class="content" id="tab-prompts">
       <div class="prompts-grid">
@@ -4266,6 +4285,8 @@
     }
 
     function showTab(name) {
+      // A tab something needs (the CLI tab for ▶ CLI) comes back if it was hidden.
+      if (hiddenTabs && hiddenTabs.has(name)) revealTab(name, true);
       const tab = document.querySelector(`.tab[data-tab="${name}"]`);
       if (tab) tab.click();
     }
@@ -7240,7 +7261,7 @@
 
     // Put a command (from a tooltip's ▶) in the CLI tab's prompt, to run with Return.
     function openInCli(text) {
-      document.querySelector('.tab[data-tab="cli"]').click();
+      showTab('cli');
       cliInputEl.value = cliSplit(text).join('\n');
       cliResize();
       cliInputEl.focus();
@@ -7309,6 +7330,201 @@
         }
       });
     });
+
+    // --- The main tabs: hover help, hiding and reordering ---
+    // Your layout is `tab_order` and `hidden_tabs` in config.json. Right-click
+    // a tab to hide or move it, drag it to reorder, and use + (the last item)
+    // to show a hidden one. The APIs tab is hidden until you show it.
+    const TAB_TIPS = {
+      chat: 'Send a prompt to one or more providers, and compare their answers side by side',
+      images: 'Make images with one or more providers, each with its own model and settings',
+      prompts: 'Write and save the prompts you reuse, and choose the active one ($$)',
+      providers: 'Your providers and their API keys: add a key, choose the default, check that it works',
+      models: "Each provider's models: the ones you use, its whole list, defaults and aliases",
+      apis: "API definitions: how Lexi talks to each kind of provider API (for adding a provider Lexi doesn't ship)",
+      cli: 'Run lexi commands here, as in a terminal',
+      configure: 'Settings: the shell, the request time limit, and the theme',
+    };
+    const DEFAULT_HIDDEN_TABS = ['apis'];
+    const tabBarEl = document.querySelector('.tabs');
+    const tabAddBtn = document.getElementById('tabAddBtn');
+    const tabEls = () => Array.from(tabBarEl.querySelectorAll('.tab'));
+    const tabLabel = (key) => (tabBarEl.querySelector(`.tab[data-tab="${key}"]`) || {}).textContent || key;
+    // `var`: showTab() may run before this point (the startup screen).
+    var hiddenTabs = new Set(DEFAULT_HIDDEN_TABS);
+
+    tabEls().forEach((t) => {
+      const tip = TAB_TIPS[t.dataset.tab];
+      t.dataset.tip = `${tip ? `${tip}. ` : ''}Right-click to hide or move it; drag to reorder.`;
+      t.draggable = true;
+    });
+
+    // Put the tabs in `order` (any not in it keep their place after those
+    // that are) and hide the ones in `hiddenTabs`; never hide them all.
+    function applyTabLayout(order) {
+      if (Array.isArray(order)) {
+        const els = tabEls();
+        const rank = (el) => { const i = order.indexOf(el.dataset.tab); return i < 0 ? order.length + els.indexOf(el) : i; };
+        els.sort((a, b) => rank(a) - rank(b)).forEach((el) => tabBarEl.insertBefore(el, tabAddBtn));
+      }
+      if (tabEls().every((t) => hiddenTabs.has(t.dataset.tab))) hiddenTabs.clear();
+      tabEls().forEach((t) => { t.hidden = hiddenTabs.has(t.dataset.tab); });
+      // The open tab can't be a hidden one.
+      const active = tabBarEl.querySelector('.tab.active');
+      if (!active || active.hidden) {
+        const first = tabEls().find((t) => !t.hidden);
+        if (first) first.click();
+      }
+      const hidden = tabEls().filter((t) => t.hidden).map((t) => t.textContent);
+      tabAddBtn.dataset.tip = hidden.length
+        ? `Show a hidden tab: ${hidden.join(', ')}`
+        : 'No tabs are hidden. Right-click a tab to hide it.';
+      tabAddBtn.classList.toggle('none-hidden', !hidden.length);
+    }
+
+    async function saveTabLayout() {
+      try {
+        await api('/api/config', {
+          method: 'POST',
+          body: JSON.stringify({
+            tab_order: tabEls().map((t) => t.dataset.tab),
+            hidden_tabs: [...hiddenTabs],
+          }),
+        });
+      } catch (err) {
+        setStatus(`Couldn't save the tab layout: ${err.message}`, 'error');
+      }
+    }
+
+    function hideTab(key) {
+      if (tabEls().filter((t) => !t.hidden && t.dataset.tab !== key).length === 0) {
+        setStatus("That's the only tab showing, so it stays.", 'warn');
+        return;
+      }
+      hiddenTabs.add(key);
+      applyTabLayout();
+      saveTabLayout();
+      setStatus(`Hid the ${tabLabel(key)} tab. Show it again with + at the end of the tabs.`, 'success');
+    }
+    function revealTab(key, quietly = false) {
+      if (!hiddenTabs.delete(key)) return;
+      applyTabLayout();
+      saveTabLayout();
+      if (!quietly) setStatus(`The ${tabLabel(key)} tab is back.`, 'success');
+    }
+    function moveTab(key, delta) {
+      const shown = tabEls().filter((t) => !t.hidden);
+      const i = shown.findIndex((t) => t.dataset.tab === key);
+      const j = i + delta;
+      if (i < 0 || j < 0 || j >= shown.length) return;
+      const el = shown[i];
+      tabBarEl.insertBefore(el, delta < 0 ? shown[j] : shown[j].nextSibling);
+      applyTabLayout();
+      saveTabLayout();
+    }
+
+    // A small menu at (x, y): `items` are {label, act} (or {hint}).
+    let tabMenuEl = null;
+    function closeTabMenu() { if (tabMenuEl) { tabMenuEl.remove(); tabMenuEl = null; } }
+    function openTabMenu(items, x, y) {
+      closeTabMenu();
+      const menu = document.createElement('div');
+      menu.className = 'dt-menu tab-menu';
+      menu.setAttribute('role', 'menu');
+      items.forEach((it) => {
+        if (it.hr) { menu.appendChild(document.createElement('hr')); return; }
+        if (it.hint) {
+          const d = document.createElement('div');
+          d.className = 'hint muted';
+          d.textContent = it.hint;
+          menu.appendChild(d);
+          return;
+        }
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'dt-menu-item';
+        b.textContent = it.label;
+        b.disabled = !!it.disabled;
+        b.addEventListener('click', () => { closeTabMenu(); it.act(); });
+        menu.appendChild(b);
+      });
+      document.body.appendChild(menu);
+      const r = menu.getBoundingClientRect();
+      menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - r.width - 8))}px`;
+      menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - r.height - 8))}px`;
+      tabMenuEl = menu;
+    }
+    document.addEventListener('mousedown', (e) => { if (tabMenuEl && !tabMenuEl.contains(e.target)) closeTabMenu(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeTabMenu(); });
+
+    function showAllTabs() {
+      const any = hiddenTabs.size > 0;
+      hiddenTabs.clear();
+      applyTabLayout();
+      saveTabLayout();
+      setStatus(any ? 'Showing every tab.' : 'Every tab is showing already.', 'success');
+    }
+
+    tabBarEl.addEventListener('contextmenu', (e) => {
+      const t = e.target.closest('.tab');
+      if (!t) return;
+      e.preventDefault();
+      const key = t.dataset.tab;
+      const shown = tabEls().filter((x) => !x.hidden);
+      const i = shown.indexOf(t);
+      openTabMenu([
+        { label: `Hide “${t.textContent}”`, act: () => hideTab(key), disabled: shown.length <= 1 },
+        { label: 'Move Left', act: () => moveTab(key, -1), disabled: i <= 0 },
+        { label: 'Move Right', act: () => moveTab(key, 1), disabled: i >= shown.length - 1 },
+        { hr: true },
+        { label: 'Show All Tabs', act: showAllTabs, disabled: hiddenTabs.size === 0 },
+      ], e.clientX, e.clientY);
+    });
+
+    tabAddBtn.addEventListener('click', () => {
+      const r = tabAddBtn.getBoundingClientRect();
+      const hidden = tabEls().filter((t) => t.hidden);
+      openTabMenu(hidden.length
+        ? [
+          ...hidden.map((t) => ({ label: `Show “${t.textContent}”`, act: () => revealTab(t.dataset.tab) })),
+          { hr: true },
+          { label: 'Show All Tabs', act: showAllTabs },
+        ]
+        : [{ hint: 'No tabs are hidden. Right-click a tab to hide it, or drag it to reorder.' }],
+      r.left, r.bottom + 4);
+    });
+
+    // Drag a tab to reorder: it goes before or after the tab it's dropped on.
+    let draggedTab = null;
+    tabBarEl.addEventListener('dragstart', (e) => {
+      const t = e.target.closest('.tab');
+      if (!t) return;
+      draggedTab = t;
+      t.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', t.dataset.tab);
+    });
+    tabBarEl.addEventListener('dragover', (e) => {
+      const t = e.target.closest('.tab');
+      if (!draggedTab || !t || t === draggedTab) return;
+      e.preventDefault();
+      const r = t.getBoundingClientRect();
+      tabBarEl.insertBefore(draggedTab, e.clientX < r.left + r.width / 2 ? t : t.nextSibling);
+    });
+    tabBarEl.addEventListener('dragend', () => {
+      if (!draggedTab) return;
+      draggedTab.classList.remove('dragging');
+      draggedTab = null;
+      applyTabLayout();
+      saveTabLayout();
+    });
+
+    // Your saved layout (the default hides the APIs tab).
+    applyTabLayout();
+    api('/api/config', { method: 'GET' }).then((cfg) => {
+      if (Array.isArray(cfg.hidden_tabs)) hiddenTabs = new Set(cfg.hidden_tabs);
+      applyTabLayout(Array.isArray(cfg.tab_order) ? cfg.tab_order : null);
+    }).catch(() => {});
 
     (function wireConfigureSubtabs() {
       const subtabs = document.querySelectorAll('#configureSubtabs .subtab');
