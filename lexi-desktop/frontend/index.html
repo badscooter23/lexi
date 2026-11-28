@@ -762,6 +762,15 @@
     .key-sources .src-error .src-state { color: var(--warning, #f59e0b); }
     .key-sources .src-not-checked { opacity: 0.7; }
     .key-sources .warn-text { color: var(--warning, #f59e0b); font-size: 0.84rem; }
+    .key-view-state {
+      margin-top: 4px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: var(--muted);
+    }
+    .key-view-state::before { content: "● "; }
+    .key-view-state.clear { color: var(--warning, #f59e0b); }
     .api-key-box {
       width: 100%;
       box-sizing: border-box;
@@ -2259,11 +2268,12 @@
         </div>
         <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap; margin-top:10px;">
           <span>Current API Key</span>
-          <button class="btn btn-ghost" id="apiKeyRevealBtn" data-cmd="key-show" type="button" disabled data-tip="Show or hide the saved key">Redacted</button>
+          <button class="btn btn-ghost" id="apiKeyRevealBtn" data-cmd="key-show" type="button" disabled data-tip="Show the key in clear text">Show Key</button>
           <button class="btn btn-ghost" id="apiKeyTestBtn" data-cmd="key-test" type="button" disabled data-tip="Ask the provider whether it accepts this key (lists its models; nothing is generated or billed)">Test</button>
           <button class="btn btn-danger" id="apiKeyRemoveBtn" data-cmd="key-remove" type="button" disabled data-tip="Delete the saved API key for this provider (providers-config.yaml is left as it is)">Remove</button>
         </div>
         <div class="api-key-status api-key-box" id="apiKeyStatus"></div>
+        <div class="key-view-state" id="apiKeyViewState" hidden></div>
         <div class="key-sources" id="apiKeySource"></div>
         <label for="apiKeyInput">New API Key</label>
         <input type="password" id="apiKeyInput" placeholder="Paste an API key…" autocomplete="off" spellcheck="false">
@@ -2516,14 +2526,17 @@
     const apiKeyStatusEl = document.getElementById('apiKeyStatus');
     const apiKeySaveBtn = document.getElementById('apiKeySaveBtn');
     const apiKeyRevealBtn = document.getElementById('apiKeyRevealBtn');
+    const apiKeyViewStateEl = document.getElementById('apiKeyViewState');
     const apiKeyRemoveBtn = document.getElementById('apiKeyRemoveBtn');
     let apiKeyRevealed = false;
     function setApiKeyRevealed(value) {
       apiKeyRevealed = !!value;
-      apiKeyRevealBtn.textContent = apiKeyRevealed ? 'Clear Text' : 'Redacted';
-      apiKeyRevealBtn.title = apiKeyRevealed
-        ? 'Click to redact the API Key'
-        : 'Click to reveal the API key in clear text';
+      // The button says what a click does; the label under the key says
+      // how it's shown now.
+      apiKeyRevealBtn.textContent = apiKeyRevealed ? 'Hide Key' : 'Show Key';
+      apiKeyRevealBtn.dataset.tip = apiKeyRevealed ? 'Redact the key again' : 'Show the key in clear text';
+      apiKeyViewStateEl.textContent = apiKeyRevealed ? 'Shown in clear text' : 'Redacted';
+      apiKeyViewStateEl.classList.toggle('clear', apiKeyRevealed);
     }
     setApiKeyRevealed(false);
     let PROVIDERS = [];
@@ -3638,6 +3651,7 @@
       apiKeyRevealBtn.disabled = true;
       apiKeyTestBtn.disabled = true;
       apiKeyRemoveBtn.disabled = true;
+      apiKeyViewStateEl.hidden = true;
       try {
         const data = await api('/api/providers/api-key', {
           method: 'POST',
@@ -3653,6 +3667,7 @@
         apiKeySaveBtn.dataset.tip = `Save this key ${storePhrase(data)}`;
         apiKeyRevealBtn.disabled = !hasKey;
         apiKeyTestBtn.disabled = !hasKey;
+        apiKeyViewStateEl.hidden = !hasKey || !!data.error;
         // Remove deletes the saved key, when there is one.
         const savedSource = (data.sources || []).find((x) => x.kind === 'saved');
         apiKeyRemoveBtn.disabled = !savedSource || savedSource.state === 'missing';
