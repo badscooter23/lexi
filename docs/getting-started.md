@@ -1,6 +1,6 @@
 # Getting Started with Lexi
 
-Lexi is a CLI-first tool for working with multiple LLM providers side by side. This guide walks you through installation, configuration, and sending your first prompt.
+This guide covers the `lexi` command line: installing it, setting up API keys, and sending your first prompt. The desktop app and the Python library read the same configuration; to install them, see [Install](../README.md#install) in the README.
 
 ## Installation
 
@@ -13,7 +13,9 @@ Lexi is a CLI-first tool for working with multiple LLM providers side by side. T
 | Linux aarch64 | `lexi-<version>-linux-aarch64.tar.gz` |
 | Windows x86_64 | `lexi-<version>-windows-x86_64.zip` |
 
-**From source** (requires stable Rust):
+The binary isn't signed yet: if you downloaded the archive in a browser, macOS blocks it until you run `xattr -d com.apple.quarantine /path/to/lexi` (an archive fetched with `curl` isn't blocked).
+
+**From source** (for working on Lexi; requires stable Rust). This builds and installs only the CLI, into `~/.cargo/bin` (`./install.sh` does the same):
 
 ```bash
 # Clone the repo

@@ -20,27 +20,100 @@ default or saved prompt set up in one works in the others.
 Configuration lives in `~/.lexi-cli/` (or `$LEXI_HOME`). Each time it runs,
 Lexi fills in any defaults that are missing and never overwrites your edits.
 
-## Quick Start
+## Install
 
-The CLI is a single native binary, `lexi`. Download the archive for your platform
-from [GitHub Releases](https://github.com/badscooter23/lexi/releases) (macOS
-universal, Linux x86_64/aarch64, Windows x86_64), or build it from source with
-stable Rust:
+Lexi comes in three parts. Install whichever you'll use; they share the same
+configuration, keys and prompts in `~/.lexi-cli/`.
+
+| Part | What you get |
+|---|---|
+| **Desktop app** | The Lexi app: chat and images with several providers side by side, a setup wizard for API keys, and a CLI tab. It doesn't put a `lexi` command on your PATH. |
+| **CLI** | The `lexi` command for a terminal: one native binary, nothing else to install. |
+| **Python library** | `import lexi` in your own programs (CPython 3.9+). |
+
+Everything is on the [latest GitHub Release](https://github.com/badscooter23/lexi/releases/latest).
+The commands below use version 0.3.0; replace it with the latest release's number.
+
+### Desktop app
+
+Download and run the installer for your system:
+
+| System | File |
+|---|---|
+| macOS (Apple silicon and Intel) | `Lexi_0.3.0_universal.dmg` — open it and drag Lexi to Applications |
+| Windows | `Lexi_0.3.0_x64-setup.exe` (or the `.msi`) |
+| Linux | `Lexi_0.3.0_amd64.deb`, `Lexi-0.3.0-1.x86_64.rpm`, or the portable `Lexi_0.3.0_amd64.AppImage` |
+
+The builds aren't signed yet, so the first time:
+- **macOS** refuses to open the app. Open **System Settings → Privacy & Security**
+  and click **Open Anyway** next to the message about Lexi. (On macOS 14 and
+  earlier, you can instead right-click the app and choose **Open**.)
+- **Windows** SmartScreen warns about it: choose **More info → Run anyway**.
+
+When it opens, the app checks your providers and, if none has a key yet, takes
+you to the **Setup Wizard**, which explains how to get a key and saves it for you.
+
+### CLI
+
+Download the archive for your system, then put `lexi` somewhere on your PATH.
+
+macOS (one universal binary) or Linux (`linux-x86_64` or `linux-aarch64`):
 
 ```bash
-./install.sh                         # = cargo install --path lexi-cli-rs
-
-lexi providers api-key set anthropic # give Lexi a key (asked for, not echoed)
-lexi providers status anthropic      # check it works (lists models; nothing billed)
-lexi respond anthropic "Explain quicksort in one paragraph"
-lexi                                 # or the interactive shell
+V=0.3.0; P=macos-universal            # or linux-x86_64 / linux-aarch64
+curl -L "https://github.com/badscooter23/lexi/releases/download/v$V/lexi-$V-$P.tar.gz" | tar xz
+mkdir -p ~/.local/bin && mv "lexi-$V-$P/lexi" ~/.local/bin/   # needs ~/.local/bin on your PATH
+lexi version
 ```
 
-Each time it runs, Lexi fills in whatever is missing from `~/.lexi-cli/` (or
-`$LEXI_HOME`): provider configs, model metadata and default command aliases.
-Files that are already there, including your edits, are left alone.
+Downloaded with `curl` like this, macOS runs it as is. If you downloaded the
+archive in a browser instead, macOS blocks the unsigned binary; clear that with
+`xattr -d com.apple.quarantine ~/.local/bin/lexi`.
 
-### API keys
+Windows: download `lexi-0.3.0-windows-x86_64.zip`, unzip it, and move
+`lexi.exe` into a folder on your PATH.
+
+Then give Lexi a key and try it:
+
+```bash
+lexi providers api-key set anthropic # asks for the key (not shown as you type)
+lexi providers status anthropic      # checks the key (lists models; nothing is billed)
+lexi respond anthropic "Explain quicksort in one paragraph"
+lexi                                 # the interactive shell
+```
+
+### Python library
+
+Install the wheel for your system from the release (it isn't on PyPI: the
+`lexi` name there is taken). For example, on an Apple-silicon Mac:
+
+```bash
+pip install "https://github.com/badscooter23/lexi/releases/download/v0.3.0/lexi-0.3.0-cp39-abi3-macosx_11_0_arm64.whl"
+```
+
+The other wheels end in `macosx_10_12_x86_64` (Intel Mac), `win_amd64`,
+`manylinux2014_x86_64…` and `manylinux2014_aarch64…`. See
+[the Python library](#python-library-import-lexi) below.
+
+### Building from source
+
+For working on Lexi itself (or a platform without a release build), clone the
+repository and install a [Rust toolchain](https://rustup.rs). Each part builds
+separately:
+
+```bash
+./install.sh                              # the CLI only: cargo install --path lexi-cli-rs (into ~/.cargo/bin)
+
+cargo install tauri-cli --version '^2'    # the desktop app (once)
+(cd lexi-desktop && cargo tauri dev)      # run it with devtools
+(cd lexi-desktop && cargo tauri build)    # or build its installers (target/release/bundle/)
+
+pip install ./lexi-python                 # the Python library (builds the wheel with maturin)
+```
+
+See [Development](#development) for tests and linting.
+
+## API keys
 
 Each provider looks for its key in order: an environment variable
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`), then the key Lexi
@@ -123,7 +196,10 @@ api create my-api --from chat-completions
 
 ## Configuration
 
-All persistent configuration lives in `~/.lexi-cli/`:
+All persistent configuration lives in `~/.lexi-cli/` (or `$LEXI_HOME`). Each
+time it runs, Lexi fills in whatever is missing there — provider configs, model
+metadata and default command aliases — and leaves files that are already there,
+including your edits, alone.
 
 ```
 ~/.lexi-cli/
@@ -204,15 +280,9 @@ everything is served in-process by `lexi-host`:
   `lexi` command and the Python that do the same thing (Copy, or **▶ CLI** to
   run it in the CLI tab).
 
-```bash
-cargo install tauri-cli --version '^2'   # once
-cd lexi-desktop
-cargo tauri dev        # run with devtools
-cargo tauri build      # produce a native installer (target/release/bundle/)
-```
-
-Prebuilt installers (macOS `.dmg`, Linux `.deb`/`.AppImage`, Windows `.msi`) are
-attached to GitHub Releases. See `lexi-desktop/README.md`.
+Installers are on each GitHub Release ([Install](#desktop-app)); building it
+yourself is under [Building from source](#building-from-source). See
+`lexi-desktop/README.md`.
 
 ## Python library (`import lexi`)
 
@@ -230,10 +300,8 @@ lexi.generate("openai", "a lighthouse at dusk", out_dir="images", timeout=600)
 
 It also manages that config — `lexi.providers`, `lexi.models`, `lexi.prompts`,
 `lexi.config`, `lexi.apis` mirror the CLI's admin commands. Results are the
-CLI's `--json` shapes. Prebuilt wheels (macOS, Linux, Windows)
-and an sdist are attached to each GitHub Release; download the wheel for your
-platform and `pip install ./lexi-*.whl`. See `lexi-python/README.md`. (Not on
-PyPI — the `lexi` name there is taken.)
+CLI's `--json` shapes. To install it, see [Install](#python-library); the
+details are in `lexi-python/README.md`.
 
 ## Development
 
