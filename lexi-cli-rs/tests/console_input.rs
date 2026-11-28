@@ -38,6 +38,8 @@ async fn run(line: &str, answer: Option<&str>) -> (u8, String, String, Vec<(Stri
 async fn questions_go_to_the_host_and_secrets_stay_out_of_history() {
     let home = common::seeded_home();
     std::env::set_var("LEXI_HOME", home.path());
+    // Never the real keychain.
+    std::env::set_var("LEXI_KEY_STORE", "file");
 
     let (code, out, err, asked) = run("providers api-key set openai", Some("sk-console-123")).await;
     assert_eq!(code, 0, "{err}");

@@ -143,6 +143,8 @@ mod tests {
         let _env = crate::backend::tests::ENV_LOCK.lock().await;
         let home = tempfile::tempdir().unwrap();
         std::env::set_var("LEXI_HOME", home.path());
+        // Never the real keychain.
+        std::env::set_var("LEXI_KEY_STORE", "file");
         lexi_host::ensure_home().unwrap();
         let (events, emit) = collect();
         run("version", "c1", emit.clone()).await;

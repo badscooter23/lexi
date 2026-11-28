@@ -29,8 +29,8 @@ your edits are never overwritten.
 Each provider looks for its key in order: an environment variable
 (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`), then the key Lexi
 saved. `lexi providers api-key set <provider>` (or the desktop app's Setup
-Wizard) saves the key in an owner-only file under `~/.lexi-cli/providers/<provider>/`,
-never in `providers-config.yaml`; `providers api-key show <provider>` lists
+Wizard) saves the key in the macOS Keychain (elsewhere, an owner-only file under
+`~/.lexi-cli/providers/<provider>/`), never in `providers-config.yaml`; `providers api-key show <provider>` lists
 where Lexi looked and which key is used. Files of your own and password
 managers (`command: [op, read, …]`) can be added with
 `providers api-key source add` — see
@@ -114,7 +114,7 @@ All persistent configuration lives in `~/.lexi-cli/`:
 ├── providers/
 │   ├── providers-config.yaml          # Providers: template, where each key comes from, overrides
 │   ├── anthropic/
-│   │   ├── api-key                    # The key Lexi saved (owner-only), if any
+│   │   ├── api-key                    # The key Lexi saved (owner-only), where there's no Keychain
 │   │   ├── configured-models.yaml     # Model metadata
 │   │   ├── default-model.yaml         # Your default model for each kind (chat, image, …)
 │   │   ├── model-aliases.yaml         # Shorthand aliases (e.g., "sonnet")

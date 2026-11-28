@@ -15,6 +15,7 @@ pub const SETTING_DEFAULTS: &[(&str, &str)] = &[
     ("prompt", "cmd"),
     ("prompt_delimiter", ">"),
     ("edit_mode", "vi"),
+    ("key_store", "auto"),
 ];
 
 /// The app settings: [`SETTING_DEFAULTS`] overlaid with the saved `config.json`.
@@ -78,9 +79,9 @@ pub fn provider_summaries() -> Result<Vec<Value>, HostError> {
 }
 
 /// Add a provider (`providers add`): checks the API definition exists, writes
-/// the entry, saves `api_key` (in the provider's owner-only key file — never
-/// the config, which gets the source), and makes
-/// `default_model` its default.
+/// the entry, saves `api_key` as its saved key (the macOS Keychain, else an
+/// owner-only key file — never the config), and makes `default_model` its
+/// default.
 pub fn create_provider(
     name: &str,
     url: &str,
@@ -124,8 +125,10 @@ fn mask(key: &str) -> String {
 ///   (masked unless `reveal`) — all null when there's none; `error` is a read
 ///   error that stopped the lookup. Commands run only with `reveal`: else a
 ///   command is `not run`, and is `source` when it would be used.
-/// - `save_to`: the file `providers api-key set` saves the key in; `store`:
-///   `{kind, available, locked}` — where saved keys are kept (`file`).
+/// - `save_to`: where `providers api-key set` saves the key (`the macOS
+///   Keychain`, or its key file); `store`: `{kind, available, locked}` —
+///   where saved keys are kept (`kind` `keychain` or `file`), and whether
+///   reading the saved key failed because the keychain is locked.
 /// - `env`: the first environment variable the list reads, if any.
 pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value, HostError> {
     provider_config(name)?;
@@ -146,7 +149,13 @@ pub fn api_key_info(name: &str, api: Option<&str>, reveal: bool) -> Result<Value
         "error": lookup.failure().map(|(s, e)| format!("couldn't read {}: {e}", s.describe())),
         "sources": lookup.to_value(),
         "save_to": plan.save_to,
-        "store": { "kind": "file", "available": true, "locked": false },
+        "store": {
+            "kind": plan.store,
+            "available": true,
+            "locked": lookup.failure().is_some_and(|(s, e)| {
+                matches!(s, Source::Saved(_)) && crate::key_store::is_locked_error(e)
+            }),
+        },
         "env": env,
     }))
 }

@@ -72,6 +72,9 @@ jobs:
   host:
     name: host (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      # macOS: also test saved keys against a throw-away keychain.
+      LEXI_TEST_KEYCHAIN: ${{ matrix.os == 'macos-latest' && '1' || '' }}
     strategy:
       fail-fast: false
       matrix:

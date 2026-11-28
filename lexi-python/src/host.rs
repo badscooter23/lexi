@@ -80,7 +80,18 @@ where
 }
 
 fn ensure_home() -> PyResult<()> {
-    lexi_host::ensure_home().map(|_| ()).map_err(lexi_err)
+    lexi_host::ensure_home().map_err(lexi_err)?;
+    let notices = lexi_host::take_notices();
+    if !notices.is_empty() {
+        Python::with_gil(|py| -> PyResult<()> {
+            let category = py.get_type_bound::<pyo3::exceptions::PyUserWarning>();
+            for n in notices {
+                PyErr::warn_bound(py, &category, &n, 1)?;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(())
 }
 
 // --- chat options -----------------------------------------------------------

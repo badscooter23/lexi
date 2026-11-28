@@ -7,9 +7,9 @@
 //! failing command never silently switches you to a different key.
 //!
 //! The listed sources are never written: a key Lexi saves goes in its own
-//! store (`saved`, a 0600 file under `$LEXI_HOME` — see
-//! `docs/key-storage-design.md`), which is looked in after the listed sources,
-//! or where the marker `saved` puts it.
+//! store (`saved` — the macOS Keychain, else a 0600 file under `$LEXI_HOME`:
+//! [`crate::key_store`], `docs/key-storage-design.md`), which is looked in
+//! after the listed sources, or where the marker `saved` puts it.
 //!
 //! A development build briefly kept keys in the OS keychain
 //! (`{keychain: NAME}`); `ensure_home` rewrites such entries to `saved`, and
@@ -22,6 +22,8 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
+
+use crate::key_store::{Slot, Store};
 
 /// One place a key can come from: an entry of an `api_key` list. (No `Debug`:
 /// a literal holds the key itself.)
@@ -37,9 +39,10 @@ pub(crate) enum Source {
     Command(Vec<String>),
     /// The key written into providers-config.yaml itself.
     Literal(String),
-    /// The key Lexi saved — its key file — looked in after the listed sources
-    /// unless the marker `saved` puts it earlier. Parsed as `Saved("")`;
-    /// [`with_saved`] fills in the file.
+    /// The key Lexi saved — where it's kept (`the macOS Keychain`, or its key
+    /// file) — looked in after the listed sources unless the marker `saved`
+    /// puts it earlier. Parsed as `Saved("")`; [`with_saved`] fills in the
+    /// place, and [`LookupOpts::saved`] says how to read it.
     Saved(String),
 }
 
@@ -61,8 +64,8 @@ impl Source {
         }
     }
 
-    /// Where it is, for messages: `$OPENAI_API_KEY`, a path (a saved key's is
-    /// its key file), a command line.
+    /// Where it is, for messages: `$OPENAI_API_KEY`, a path, a command line,
+    /// where a saved key is kept (`the macOS Keychain`, or its key file).
     pub(crate) fn describe(&self) -> String {
         match self {
             Source::Env(v) => format!("${v}"),
@@ -161,7 +164,7 @@ pub(crate) fn sources_value(sources: &[Source]) -> Value {
     Value::Array(sources.iter().map(Source::to_value).collect())
 }
 
-/// The sources looked in: the listed ones with the saved key (its file
+/// The sources looked in: the listed ones with the saved key (kept in
 /// `saved`) where the marker `saved` is, else last. With no saved key (a
 /// model's own `api_key`), the marker is dropped.
 pub(crate) fn with_saved(listed: &[Source], saved: Option<&str>) -> Vec<Source> {
@@ -316,6 +319,8 @@ pub(crate) struct LookupOpts {
     /// Config files a `command:` may come from: a command isn't run when one
     /// of them can be changed by other users.
     pub(crate) guard: Vec<PathBuf>,
+    /// Where the saved key is read from (none for a model's own `api_key`).
+    pub(crate) saved: Option<(Store, Slot)>,
 }
 
 /// Look through `sources` in order for a key, running commands.
@@ -327,6 +332,7 @@ pub(crate) fn lookup(home: &Path, sources: &[Source]) -> Lookup {
         &LookupOpts {
             run_commands: true,
             guard: Vec::new(),
+            saved: None,
         },
     )
 }
@@ -348,14 +354,18 @@ pub(crate) fn lookup_with(home: &Path, sources: &[Source], opts: &LookupOpts) ->
                 }
                 _ => Outcome::Missing("not set"),
             },
-            Source::File(raw) | Source::Saved(raw) => {
+            Source::Saved(_) => match opts.saved.as_ref().map(|(store, slot)| store.read(slot)) {
+                Some(Ok(Some(k))) => {
+                    key = Some(k);
+                    Outcome::Used
+                }
+                None | Some(Ok(None)) => Outcome::Missing("none saved"),
+                Some(Err(e)) => Outcome::Failed(e),
+            },
+            Source::File(raw) => {
                 let path = file_path(home, raw);
                 if raw.is_empty() || !path.exists() {
-                    Outcome::Missing(if matches!(source, Source::Saved(_)) {
-                        "none saved"
-                    } else {
-                        "no file"
-                    })
+                    Outcome::Missing("no file")
                 } else {
                     match std::fs::read_to_string(&path) {
                         Ok(v) if !v.trim().is_empty() => {
@@ -455,15 +465,7 @@ fn run_command(home: &Path, argv: &[String], guard: &[PathBuf]) -> Result<Option
     if let Some(why) = unsafe_config(guard) {
         return Err(why);
     }
-    let run = || run_command_now(home, argv);
-    // Waiting blocks; on a multi-threaded runtime, let its other tasks move
-    // to another thread meanwhile.
-    let out = match tokio::runtime::Handle::try_current() {
-        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
-            tokio::task::block_in_place(run)
-        }
-        _ => run(),
-    }?;
+    let out = run_command_now(home, argv)?;
     if let Some(k) = &out {
         if let Ok(mut c) = command_cache().lock() {
             c.insert(argv.to_vec(), k.clone());
@@ -473,7 +475,6 @@ fn run_command(home: &Path, argv: &[String], guard: &[PathBuf]) -> Result<Option
 }
 
 fn run_command_now(home: &Path, argv: &[String]) -> Result<Option<String>, String> {
-    use std::process::{Command, Stdio};
     let program = &argv[0];
     let args: Vec<PathBuf> = argv[1..]
         .iter()
@@ -482,14 +483,117 @@ fn run_command_now(home: &Path, argv: &[String]) -> Result<Option<String>, Strin
             None => PathBuf::from(a),
         })
         .collect();
-    let mut child = Command::new(file_path_for_program(program))
-        .args(&args)
-        .current_dir(home)
-        .stdin(Stdio::null())
+    let mut cmd = std::process::Command::new(file_path_for_program(program));
+    cmd.args(&args).current_dir(home);
+    let out = run_process(cmd, None, COMMAND_TIMEOUT).map_err(|e| e.about(program))?;
+    if !out.ok() {
+        return Err(format!("`{program}` {}", out.failure()));
+    }
+    let key = out.stdout.trim();
+    Ok((!key.is_empty()).then(|| key.to_string()))
+}
+
+/// What a finished program did.
+pub(crate) struct Finished {
+    /// The exit status (`None`: stopped by a signal).
+    pub(crate) code: Option<i32>,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+}
+
+impl Finished {
+    pub(crate) fn ok(&self) -> bool {
+        self.code == Some(0)
+    }
+
+    /// `exited with status 1: <the first lines of stderr>`.
+    pub(crate) fn failure(&self) -> String {
+        let what = match self.code {
+            Some(c) => format!("exited with status {c}"),
+            None => "was stopped".to_string(),
+        };
+        let err = self.stderr_lines();
+        if err.is_empty() {
+            what
+        } else {
+            format!("{what}: {err}")
+        }
+    }
+
+    /// The first few non-blank lines of stderr, joined.
+    pub(crate) fn stderr_lines(&self) -> String {
+        self.stderr
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .take(3)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+/// Why a program didn't finish.
+pub(crate) enum RunError {
+    Start(String),
+    Timeout(Duration),
+    Wait(String),
+}
+
+impl RunError {
+    /// For messages, naming the program: "couldn't run `op`: …", "`op`
+    /// didn't finish within 60 seconds".
+    pub(crate) fn about(&self, program: &str) -> String {
+        match self {
+            RunError::Start(e) => format!("couldn't run `{program}`: {e}"),
+            RunError::Timeout(t) => {
+                format!("`{program}` didn't finish within {} seconds", t.as_secs())
+            }
+            RunError::Wait(e) => format!("`{program}`: {e}"),
+        }
+    }
+}
+
+/// Run `cmd` (stdin `input`, else nothing) and collect what it writes; a
+/// failure to start or not finishing within `timeout` is an error. Waiting
+/// blocks: on a multi-threaded runtime, the runtime's other tasks move to
+/// another thread meanwhile.
+pub(crate) fn run_process(
+    cmd: std::process::Command,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+) -> Result<Finished, RunError> {
+    let run = move || run_process_now(cmd, input, timeout);
+    match tokio::runtime::Handle::try_current() {
+        Ok(h) if h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(run)
+        }
+        _ => run(),
+    }
+}
+
+fn run_process_now(
+    mut cmd: std::process::Command,
+    input: Option<Vec<u8>>,
+    timeout: Duration,
+) -> Result<Finished, RunError> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = cmd
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("couldn't run `{program}`: {e}"))?;
+        .map_err(|e| RunError::Start(e.to_string()))?;
+    if let (Some(bytes), Some(mut stdin)) = (input, child.stdin.take()) {
+        // Written from a thread, so a program that doesn't read can't block us.
+        std::thread::spawn(move || {
+            let _ = stdin.write_all(&bytes);
+        });
+    }
     let read = |mut r: Box<dyn Read + Send>| {
         std::thread::spawn(move || {
             let mut buf = Vec::new();
@@ -503,39 +607,23 @@ fn run_command_now(home: &Path, argv: &[String]) -> Result<Option<String>, Strin
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() >= COMMAND_TIMEOUT => {
+            Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
-                    "`{program}` didn't finish within {} seconds",
-                    COMMAND_TIMEOUT.as_secs()
-                ));
+                return Err(RunError::Timeout(timeout));
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => return Err(format!("`{program}`: {e}")),
+            Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+            Err(e) => return Err(RunError::Wait(e.to_string())),
         }
     };
-    let out = String::from_utf8_lossy(&stdout.join().unwrap_or_default()).to_string();
-    if !status.success() {
-        let err = String::from_utf8_lossy(&stderr.join().unwrap_or_default()).to_string();
-        let err: Vec<&str> = err
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty())
-            .take(3)
-            .collect();
-        let what = match status.code() {
-            Some(c) => format!("exited with status {c}"),
-            None => "was stopped".to_string(),
-        };
-        return Err(if err.is_empty() {
-            format!("`{program}` {what}")
-        } else {
-            format!("`{program}` {what}: {}", err.join(" "))
-        });
-    }
-    let key = out.trim();
-    Ok((!key.is_empty()).then(|| key.to_string()))
+    let text = |h: std::thread::JoinHandle<Vec<u8>>| {
+        String::from_utf8_lossy(&h.join().unwrap_or_default()).to_string()
+    };
+    Ok(Finished {
+        code: status.code(),
+        stdout: text(stdout),
+        stderr: text(stderr),
+    })
 }
 
 /// A command's program: `~/…` is under your home folder; anything else as

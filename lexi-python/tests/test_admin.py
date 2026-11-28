@@ -45,7 +45,7 @@ def test_providers_lifecycle(home):
     }
     saved = lexi.providers.set_key("yours", "k2")
     assert saved == {
-        "provider": "yours", "location": "providers/yours/api-key",
+        "provider": "yours", "location": "providers/yours/api-key", "store": "file",
         "added": False, "used": "providers/yours/api-key",
     }
     assert lexi.providers.show_key("yours", reveal=True)["key"] == "k2"
