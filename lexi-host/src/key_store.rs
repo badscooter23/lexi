@@ -228,7 +228,7 @@ impl Store {
     }
 
     /// Saved keys in the keychain file `keychain` (tests).
-    #[cfg(test)]
+    #[cfg(all(test, target_os = "macos"))]
     fn keychain_at(home: &Path, keychain: &Path) -> Store {
         Store {
             home: home.to_path_buf(),
@@ -511,6 +511,27 @@ mod tests {
     }
 
     #[test]
+    fn a_locked_keychain_is_told_apart() {
+        let finished = |code, stderr: &str| Finished {
+            code: Some(code),
+            stdout: String::new(),
+            stderr: stderr.into(),
+        };
+        let ssh = finished(
+            INTERACTION_NOT_ALLOWED,
+            "security: SecKeychainSearchCopyNext: User interaction is not allowed.",
+        );
+        assert!(locked(&ssh));
+        assert!(is_locked_error(&Store::failed(&ssh)));
+        let other = finished(51, "security: SecKeychainItemCopyContent: bad password");
+        assert!(!locked(&other));
+        assert_eq!(
+            Store::failed(&other),
+            "`security` exited with status 51: security: SecKeychainItemCopyContent: bad password"
+        );
+    }
+
+    #[test]
     fn slots_name_their_file_and_keychain_item() {
         let home = tempfile::tempdir().unwrap();
         let p = Slot::new("openai", None);
@@ -635,12 +656,8 @@ mod tests {
             Ok(Some("sk-new 'quoted' \"key\"".into()))
         );
 
-        // Locked: reading is an error that says how to fix it.
-        security(&["lock-keychain", k]);
-        let err = store.read(&renamed).unwrap_err();
-        assert!(is_locked_error(&err) || err.contains("security"), "{err}");
-        security(&["unlock-keychain", "-p", "pw", k]);
-
+        // (A locked keychain isn't tested here: with a desktop session, as a CI
+        // runner has, `security` waits on an unlock dialog instead of failing.)
         assert!(store.delete(&renamed).unwrap());
         assert!(!store.delete(&renamed).unwrap());
         security(&["delete-keychain", k]);
