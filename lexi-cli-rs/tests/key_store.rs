@@ -4,7 +4,7 @@
 
 mod common;
 
-use common::{lexi, lexi_out, seeded_home, stderr, stdout};
+use common::{lexi, lexi_out, seeded_home, stderr};
 use serde_json::Value;
 
 fn json(o: &std::process::Output) -> Value {
@@ -59,6 +59,7 @@ fn the_key_store_setting_is_checked() {
 #[cfg(target_os = "macos")]
 mod keychain {
     use super::*;
+    use crate::common::stdout;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use wiremock::matchers::{header, method, path};
