@@ -2,7 +2,23 @@
 
 [![CI](https://github.com/badscooter23/lexi/actions/workflows/ci.yml/badge.svg)](https://github.com/badscooter23/lexi/actions/workflows/ci.yml)
 
-Lexi is a CLI-first tool for working with multiple LLM providers side by side, with a native desktop app. It ships with preconfigured support for OpenAI, Anthropic, and NVIDIA, and seeds provider configs into `~/.lexi-cli/` on first run.
+Lexi gives you one way to work with many LLM providers — OpenAI, Anthropic and
+NVIDIA out of the box, and any other that speaks one of the APIs it knows —
+from the command line, a native desktop app, or Python. All three are built on
+the same Rust library and share one configuration, so a provider, key, model
+default or saved prompt set up in one works in the others.
+
+- **One request for every output:** `lexi respond` (Python: `lexi.respond`)
+  asks for text, images or both, and the model decides which of the
+  provider's APIs is called; embeddings have their own `embed`.
+- **Side by side:** the desktop app sends one prompt to several providers at
+  once and shows the answers (or images) together.
+- **Described, not coded:** how each provider's API is called — its request,
+  response and settings — is defined in YAML, so adding a provider or an API
+  style is a configuration change.
+
+Configuration lives in `~/.lexi-cli/` (or `$LEXI_HOME`). Each time it runs,
+Lexi fills in any defaults that are missing and never overwrites your edits.
 
 ## Quick Start
 
@@ -20,9 +36,9 @@ lexi respond anthropic "Explain quicksort in one paragraph"
 lexi                                 # or the interactive shell
 ```
 
-On first run, Lexi seeds `~/.lexi-cli/` (or `$LEXI_HOME`) with provider configs,
-model metadata, and default command aliases. It only fills in missing files;
-your edits are never overwritten.
+Each time it runs, Lexi fills in whatever is missing from `~/.lexi-cli/` (or
+`$LEXI_HOME`): provider configs, model metadata and default command aliases.
+Files that are already there, including your edits, are left alone.
 
 ### API keys
 
