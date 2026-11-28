@@ -111,6 +111,11 @@
     .status[data-tone="error"], .msg-log .tone-error { color: var(--danger); }
     .status[data-tone="warn"], .msg-log .tone-warn { color: var(--warning, #f59e0b); }
     .status[data-tone="busy"] { animation: lexi-pulse 1.6s ease-in-out infinite; }
+    .status.fresh:not([data-tone="busy"]) { animation: lexi-status-in 0.9s ease-out; }
+    @keyframes lexi-status-in {
+      0% { background: var(--input-bg); border-color: var(--border); }
+      100% { background: transparent; border-color: transparent; }
+    }
     .msg-log {
       position: absolute;
       top: calc(100% + 4px);
@@ -2631,6 +2636,10 @@
       if (!text) return;
       statusEl.textContent = text;
       statusEl.dataset.tone = tone;
+      // Flash it (restarting the animation), so a repeat is seen to be new.
+      statusEl.classList.remove('fresh');
+      void statusEl.offsetWidth;
+      statusEl.classList.add('fresh');
       if (tone !== 'busy') {
         const last = messageLog[0];
         if (last && last.text === text && last.tone === tone) last.at = new Date();
@@ -2638,6 +2647,13 @@
         if (messageLog.length > 100) messageLog.length = 100;
         if (!msgLogEl.hidden) renderMessageLog();
       }
+    }
+    // Back to "Ready" (a new tab: the last tab's message doesn't apply to
+    // it). The recent-messages list keeps everything.
+    function clearStatus() {
+      statusEl.textContent = 'Ready';
+      statusEl.dataset.tone = 'muted';
+      statusEl.classList.remove('fresh');
     }
     function renderMessageLog() {
       const time = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -3031,13 +3047,15 @@
       }
     }
 
-    async function loadPrompts() {
-      setStatus('Loading prompts...', 'busy');
+    // Read the saved prompts again. It happens on its own (opening a tab), so
+    // only a failure is reported — unless `announce` (you asked for it).
+    async function loadPrompts(announce = false) {
+      if (announce) setStatus('Loading prompts...', 'busy');
       try {
         const data = await api('/api/prompts', { method: 'GET' });
         promptsChanged(data.prompts || []);
         const n = (data.prompts || []).length;
-        setStatus(`Loaded ${n} saved prompt${n === 1 ? '' : 's'}.`);
+        if (announce) setStatus(`Loaded ${n} saved prompt${n === 1 ? '' : 's'}.`);
       } catch (err) {
         setStatus(err.message, 'error');
       }
@@ -5872,7 +5890,9 @@
 
     // Always a live fetch from the provider; if that fails, the last cached list
     // (if any) is shown under the error.
-    async function loadHosted() {
+    // Fetch the provider's model list. Opening the tab does it on its own, so
+    // only a failure is reported then; Refresh (`announce`) reports it all.
+    async function loadHosted(announce = false) {
       const provider = mtProvider;
       if (!provider) return;
       const seq = ++hostedSeq;
@@ -5887,11 +5907,11 @@
       }
       let notice = '';
       let models = [];
-      setStatus(`Fetching the model list from ${provider}...`, 'busy');
+      if (announce) setStatus(`Fetching the model list from ${provider}...`, 'busy');
       try {
         const data = await api(`/api/models/hosted?${q}`);
         models = data.models || [];
-        setStatus(`Fetched ${models.length} model${models.length === 1 ? '' : 's'} from ${provider}.`, 'success');
+        if (announce) setStatus(`Fetched ${models.length} model${models.length === 1 ? '' : 's'} from ${provider}.`, 'success');
       } catch (err) {
         setStatus(`Couldn't fetch the model list from ${provider}: ${err.message}`, 'error');
         notice = `<span class="error-text">Couldn't fetch the model list from ${esc(provider)}: ${esc(err.message)}</span>`;
@@ -5921,13 +5941,13 @@
       if (hostedFor !== mtProvider) await loadHosted();
     }
 
-    hostedRefreshBtn.addEventListener('click', () => loadHosted());
+    hostedRefreshBtn.addEventListener('click', () => loadHosted(true));
 
     modelsProviderEl.addEventListener('change', () => {
       mtProvider = modelsProviderEl.value;
       configuredTable.reset();
       loadConfigured();
-      loadHosted();
+      loadHosted(true);
     });
 
     // --- Split divider: drag to share the space; the split is kept as a
@@ -6360,8 +6380,12 @@
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !imgGenerateBtn.disabled) { e.preventDefault(); generateImages(); }
     });
     document.getElementById('imgClearBtn').addEventListener('click', () => {
+      const cleared = imgResults.filter((r) => r.status !== 'pending').length;
       imgResults = imgResults.filter((r) => r.status === 'pending');
       renderImgGallery();
+      setStatus(cleared
+        ? `Cleared ${cleared} result${cleared === 1 ? '' : 's'} from the list (the images stay in ${imgDirEl.textContent || 'the images folder'}).`
+        : 'Nothing to clear.');
     });
     document.getElementById('imgDirOpenBtn').addEventListener('click', () => revealImage(null));
     document.getElementById('imgDirChangeBtn').addEventListener('click', async () => {
@@ -7255,6 +7279,7 @@
     tabs.forEach((tab) => {
       tab.addEventListener('click', () => {
         const target = tab.getAttribute('data-tab');
+        if (!tab.classList.contains('active')) clearStatus();
         tabs.forEach((t) => t.classList.toggle('active', t === tab));
         contents.forEach((c) => c.classList.toggle('active', c.id === `tab-${target}`));
         if (target === 'chat') {
