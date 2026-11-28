@@ -710,10 +710,10 @@ uses the default (§12.4). Nothing that changes a key is ever applied to
   write `openai#`.
 
 **Downgrading to 0.3.0** keeps working while the original key is unnamed:
-0.3.0 reads the provider's own slot. 0.3.0 doesn't see the variable, now
-taken out of the list, but its template still reads `${OPENAI_API_KEY}` when
-`api_key` is absent. Once the key is renamed, or for keys added later, 0.3.0
-finds nothing. As in §6, the release notes say to run `providers api-key
+0.3.0 reads the provider's own slot. Two things it no longer finds:
+- the provider's variable, once it's out of the list (put `{env:
+  OPENAI_API_KEY}` back in `api_key` for 0.3.0 to read it);
+- the original key once it's renamed, and any key added later. As in §6, the release notes say to run `providers api-key
 show --reveal` first.
 
 **Commands from 0.3.0:** `lexi providers api-key set openai`, `remove` and
