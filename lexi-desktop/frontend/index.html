@@ -2861,7 +2861,7 @@
         return { cls: 'badge-incomplete', label: 'Not ready', need: need.join(' · '), tip: `${p.name} can't take a request that names no key yet: ${need.join(', ')}.` };
       }
       if (verified.length) {
-        return { cls: 'badge-ready', label: 'Verified', tip: `Ready, and ${p.name} accepted ${verified.join(', ')} when tested.` };
+        return { cls: 'badge-ready', label: 'Verified', tip: `Ready, and ${p.name} accepted ${verified.join(', ')} when tested (the test doesn't check the account's credit or quota).` };
       }
       return { cls: 'badge-ready badge-unverified', label: 'Ready', tip: `Everything is set up. None of ${p.name}'s keys has been tested yet: test one on API Keys below.` };
     }
@@ -3832,14 +3832,17 @@
       return `${n} ${unit}${n === 1 ? '' : 's'} ago`;
     }
 
-    // A key's status: Found (it can be read), Tested ✓ (the provider accepted
-    // it), Rejected (it refused it), Failed (the test got no answer), No key
-    // yet, or Can't read it. A test is remembered until the key changes.
+    // A key's status: Found (it can be read), Key accepted (the provider
+    // accepted it in a test — which doesn't check credit), Rejected (it
+    // refused it), Failed (the test got no answer), No credit (a request was
+    // refused for the account's credit or quota), No key yet, or Can't read
+    // it. A test is remembered until the key changes.
     function keyStateHtml(provider, k) {
       if (k.error) return `<span class="key-state bad" data-tip="${esc(k.error)}">Can't read it</span>`;
       if (!k.source) return '<span class="key-state" data-tip="None of the places Lexi looks has a key: edit it to save one, or add a source">No key yet</span>';
       const c = k.check;
-      if (c && c.status === 'ok') return `<span class="key-state ok" data-tip="${esc(provider)} accepted it ${esc(ago(c.at))}">Tested ✓</span>`;
+      if (c && c.status === 'ok') return `<span class="key-state ok" data-tip="${esc(provider)} accepted it ${esc(ago(c.at))}. The test lists its models, which is free, so it doesn't show whether the account has credit or quota left">Key accepted</span>`;
+      if (c && c.status === 'no_credit') return `<span class="key-state bad" data-tip="A request ${esc(ago(c.at))} was refused because the account for this key has no credit or quota left. Add credit with ${esc(provider)}, or use another key; testing it again clears this">No credit</span>`;
       if (c && c.status === 'rejected') return `<span class="key-state bad" data-tip="${esc(provider)} refused it ${esc(ago(c.at))}: check that you copied all of it, or create a new one">Rejected</span>`;
       if (c && c.status === 'failed') return `<span class="key-state warn" data-tip="Lexi couldn't reach ${esc(provider)} to test it ${esc(ago(c.at))} (no connection, a timeout, or the provider had a problem). Test it again">Failed</span>`;
       return '<span class="key-state found" data-tip="Lexi can read it; it hasn\'t been tested yet (test it with the pulse icon)">Found</span>';

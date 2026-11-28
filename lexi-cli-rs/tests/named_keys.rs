@@ -252,3 +252,52 @@ fn keys_are_listed_added_renamed_and_removed() {
     )
     .contains("invalid provider name"));
 }
+
+/// A provider that refuses a request because the key's account can't pay
+/// (its `billing_errors` rule matches): the error says so plainly, and the
+/// key list marks the key until it's tested again.
+#[tokio::test]
+async fn an_account_without_credit_is_said_plainly() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "type": "error",
+            "error": { "type": "invalid_request_error", "message": "Your credit balance is too low to access the API." }
+        })))
+        .mount(&server)
+        .await;
+    let home = seeded_home();
+    let h = home.path();
+    std::fs::write(
+        h.join("providers/providers-config.yaml"),
+        format!(
+            "providers:\n  p:\n    url: {}/v1\n    api: chat-completions\n    default_model: m\n    billing_errors:\n      - match: credit balance is too low\n        message: the account for this key has no credit left\n",
+            server.uri()
+        ),
+    )
+    .unwrap();
+    ok(
+        h,
+        &[
+            "providers",
+            "api-key",
+            "set",
+            "p#work",
+            "--value",
+            "sk-work",
+        ],
+    );
+    let mut cmd = lexi(h);
+    cmd.args(["respond", "p", "hi"]);
+    let o = run(cmd).await;
+    assert!(!o.status.success());
+    assert!(
+        stderr(&o).contains("p#work: the account for this key has no credit left. (The provider said: Your credit balance is too low to access the API.)"),
+        "{}",
+        stderr(&o)
+    );
+    let list = json_of(h, &["providers", "keys", "list", "p"]);
+    assert_eq!(list["keys"][0]["check"]["status"], "no_credit");
+    assert!(ok(h, &["providers", "keys", "list", "p"]).contains("no credit"));
+}
