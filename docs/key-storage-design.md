@@ -320,7 +320,7 @@ Each step is its own PR with CHANGELOG notes.
 
 ## 11. Addition: named keys (several accounts per provider)
 
-**Status:** proposed · 2026-11-28
+**Status:** accepted · 2026-11-28 (decisions in §11.10)
 
 ### 11.1 Problem
 
@@ -370,9 +370,9 @@ providers:
 
 ### 11.4 Which key a request uses
 
-1. The key the request names (`--key work`, `key="work"`, the desktop
-   app's picker). An unknown name is an error that lists the provider's
-   keys.
+1. The key the request names: `--key work`, `key="work"`, the shorthand
+   `openai#work` (§11.7), or the desktop app's picker. An unknown name is an
+   error that lists the provider's keys.
 2. Otherwise, as today: a configured model's own `api_key`, then an API
    binding's own `api_key`, then the provider's **default key**
    (`default_key`, else the unnamed one).
@@ -381,7 +381,7 @@ A named key covers **every API** of the provider. An account's key works for
 chat, images and embeddings alike. An API binding's own `api_key` (§4.6) is
 an override of the *unnamed* key only. When a request names a key, that key
 is used for every API, and the binding's own key is skipped. Per-API keys
-under a named key are left out (open question 2).
+under a named key are left out (§11.10).
 
 In the effective config, the chosen key goes in `_key_scope` as `{key:
 NAME}`, next to today's `{api}` / `{model}`. Everything downstream that
@@ -396,7 +396,8 @@ Each named key has its own slot in the saved store:
 | Keychain / Credential Manager / Secret Service account | `openai[@home]` | `openai#work[@home]` |
 | Key file (no store) | `providers/openai/api-key` | `providers/openai/keys/work` |
 
-`#` can't appear in a provider name, nor in a key name. The `keys/`
+`#` can't appear in a provider name (new names are refused; §11.7), nor in
+a key name. The `keys/`
 folder can't clash with `api-key-<api>`. Rename and remove provider carry
 named keys along, as they do the others. Removing a named key from the
 config deletes its saved key.
@@ -412,7 +413,7 @@ key that made them must be used again:
   upload. A mismatch is the provider's "not found" error; Lexi can't tell
   which account owns an id.
 - **The catalog** (`models hosted`): accounts can see different models, such
-  as fine-tunes. The cache stays one per provider for now (open question 3).
+  as fine-tunes. There's one cache per provider, not one per key (§11.10).
   `models hosted --key work` lists, and caches, what that account sees.
 
 ### 11.7 Surfaces
@@ -427,6 +428,28 @@ key that made them must be used again:
 
 - `providers api-key set openai --name work` creates the named key if it
   doesn't exist yet. That's the one-step path most people need.
+
+**The `provider#key` shorthand.** Wherever a command or function takes the
+provider a request goes to, `openai#work` means `openai` with `--key work`:
+- In the CLI and Python, `lexi respond openai#work "…"` and
+  `lexi.respond("openai#work", …)` are the same request as with `--key work`
+  / `key="work"`.
+- In `providers api-key …`, `openai#work` is the same as `--name work`, so
+  `providers api-key set openai#work` creates the key.
+- Naming the key both ways is fine when the two agree. When they disagree,
+  it's an error.
+- `openai#default` is the unnamed key.
+- Commands that change the provider itself (`providers rename|rm|upgrade`,
+  `providers api …`, `models …`) take the provider alone: a `#key` there is
+  an error that says to leave it out.
+- `#` is safe on a command line. Lexi's shell treats it specially only at the
+  start of a line (`#N`), and shells start a comment only at the start of a
+  word.
+- `#` becomes a character provider names can't contain: `providers add` and
+  `rename` refuse it. A provider already named with `#` (unlikely) keeps
+  working but can't be given named keys until it's renamed.
+- The desktop app shows a provider column with a named key as `openai#work`.
+  The ">_" help writes the shorthand rather than `--key`.
 - `api-key show` without `--name` shows the default key, and says which one
   that is.
 
@@ -459,15 +482,12 @@ with them in it:
   - jobs and uploads.
 - **Step 4, desktop:** as planned, plus the key tabs and pickers.
 
-### 11.10 Open questions
+### 11.10 Decisions
 
-1. **The flag's name:** `--key work` (proposed: it matches `keys:` and
-   `api-key`) or `--account work`, which says what it's for but isn't
-   always true (a shared team key)?
-2. **Per-API keys under a named key** (`keys.work.apis.image-generations`):
-   left out until someone needs it.
-3. **A catalog cache per named key:** only if accounts' model lists turn
-   out to differ in practice.
-4. **A shorthand** such as `openai#work` wherever a provider name is
-   accepted. It would be shorter, but it makes "provider" mean two things.
-   Proposed: no.
+Decided 2026-11-28:
+1. **The flag is `--key`** (Python `key=`), not `--account`: it matches
+   `keys:` and `api-key`, and not every key is an account.
+2. **No per-API keys under a named key.** A named key covers every API of
+   the provider. An API's own `api_key` applies only to the unnamed key.
+3. **One catalog cache per provider,** shared by its keys.
+4. **The `provider#key` shorthand is in** (§11.7).
