@@ -864,6 +864,30 @@
     }
     .badge-unverified { opacity: 0.8; }
     .provider-need { font-size: 0.84rem; }
+    .pick-chip {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--input-bg);
+      overflow: hidden;
+    }
+    .pick-chip .pick-toggle, .pick-chip .pick-remove {
+      font: inherit;
+      font-size: 0.88rem;
+      background: none;
+      border: none;
+      color: var(--text);
+      cursor: pointer;
+      padding: 4px 4px 4px 12px;
+    }
+    .pick-chip .pick-remove { padding: 4px 10px 4px 6px; color: var(--muted); }
+    .pick-chip .pick-remove:hover { color: var(--danger); }
+    .pick-chip.on { border-color: var(--accent-2); }
+    .pick-chip.off .pick-toggle { color: var(--muted); text-decoration: line-through; }
+    .pick-chip.bad { border-color: var(--warning, #f59e0b); }
+    .pick-chip.bad .pick-toggle { color: var(--warning, #f59e0b); }
+    .pick-add { width: 28px; height: 28px; }
     .provider-unconfigured {
       opacity: 0.6;
     }
@@ -2595,34 +2619,6 @@
     let providerConfigured = {};
     let providerKeys = {};    // provider → its keys when it has named ones (/api/providers `keys`)
 
-    // The provider a Chat or Images column sends to: `openai#work` → `openai`.
-    function baseProvider(column) { return String(column).split('#')[0]; }
-    // A provider's columns in Chat and Images (docs/key-storage-design.md
-    // §12.6): one per key that has a key — `openai#work`, and `openai#` for a
-    // key from before names — plus `openai ($OPENAI_API_KEY)` when the
-    // provider's variable is set (a plain `openai` uses it). With only one of
-    // these, just `openai`. A provider with neither isn't offered. `info` is a
-    // provider's `keys` from /api/providers (config::key_names).
-    function keyColumns(name, info) {
-      if (!info || !Array.isArray(info.keys)) return [{ id: name, provider: name, key: null, hasKey: null, label: name }];
-      const varSet = !!(info.variable && info.variable.set);
-      const cols = info.keys.filter((k) => k.source || k.error).map((k) => ({
-        id: `${name}#${k.name}`, provider: name, key: k.name, hasKey: !!k.source, label: `${name}#${k.name}`,
-      }));
-      if (varSet) cols.push({ id: name, provider: name, key: null, hasKey: true, label: `${name} ($${info.variable.name})` });
-      if (cols.length === 1) {
-        // A plain `openai` uses the variable when it's set, else the default key.
-        const c = cols[0];
-        if (c.key === null || (!varSet && c.key === info.default_key)) {
-          return [{ ...c, id: name, key: null, label: name }];
-        }
-      }
-      return cols;
-    }
-    function chatColumns() {
-      return CHAT_PROVIDERS.flatMap((name) => keyColumns(name, providerKeys[name]));
-    }
-
     function escapeHtml(str) {
       const div = document.createElement('div');
       div.textContent = str;
@@ -2678,54 +2674,16 @@
     });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !msgLogEl.hidden) toggleMessageLog(false); });
 
-    let providerModelCache = {};
 
-    function renderProviderSelector() {
-      providerListEl.innerHTML = '<span class="muted" style="font-size:0.95rem;">Providers:</span>';
-      if (!CHAT_PROVIDERS.length) {
-        providerListEl.insertAdjacentHTML('beforeend', '<span class="muted" style="font-size:0.9rem;">none of your providers has a chat model</span>');
-      } else if (!chatColumns().length) {
-        providerListEl.insertAdjacentHTML('beforeend', '<span class="muted" style="font-size:0.9rem;">none of your providers has an API key yet: add one on the Providers tab</span>');
-      }
-      chatColumns().forEach((col, idx) => {
-        const name = col.id;
-        const id = `provider-${idx}`;
-        const pill = document.createElement('div');
-        pill.className = 'provider-pill';
-        const input = document.createElement('input');
-        input.type = 'checkbox';
-        input.id = id;
-        input.value = name;
-        input.checked = idx === 0;
-        input.addEventListener('change', () => {
-          renderResponses();
-          refreshRespondTools();
-        });
-        const lbl = document.createElement('label');
-        lbl.setAttribute('for', id);
-        lbl.style.margin = '0';
-        lbl.style.cursor = 'pointer';
-        lbl.textContent = col.label;
-        if (col.key !== null) lbl.dataset.tip = `${col.provider} with its key ${col.key ? `#${col.key}` : '# (saved before keys had names)'}`;
-        else if (col.label !== name) lbl.dataset.tip = `${col.provider} with the key in $${(providerKeys[col.provider].variable || {}).name} (a request that names no key uses it)`;
-        if (col.hasKey === false) {
-          lbl.classList.add('provider-unconfigured');
-          lbl.dataset.tip = `${name} has no API key yet: save one on the Providers tab`;
-        } else if (providerConfigured[col.provider] === false) {
-          lbl.classList.add('provider-unconfigured');
-          lbl.title = 'Provider not fully configured (missing URL, API key, or default model)';
-        }
-        const sel = document.createElement('select');
-        sel.id = `provider-model-${name}`;
-        sel.innerHTML = '<option value="">(default)</option>';
-        pill.appendChild(input);
-        pill.appendChild(lbl);
-        pill.appendChild(sel);
-        providerListEl.appendChild(pill);
-        fetchModelsForProvider(col.provider, sel);
-      });
+    // Chat's providers are its picks (see "Provider picks" below).
+    function renderChatPicks() {
+      renderPicks('chat', providerListEl, renderChatPicks);
       renderResponses();
       refreshRespondTools();
+    }
+    async function renderProviderSelector() {
+      await validatePicks('chat');
+      renderChatPicks();
     }
 
     // --- Tool preset selector ---------------------------------------------
@@ -2786,65 +2744,28 @@
       });
     }
 
-    async function fetchModelsForProvider(provider, selectEl) {
-      if (providerModelCache[provider]) {
-        populateModelSelect(selectEl, providerModelCache[provider]);
-        return;
-      }
-      try {
-        const q = encodeURIComponent(provider);
-        const [data, def] = await Promise.all([
-          api(`/api/models?provider=${q}`),
-          api(`/api/models/default?provider=${q}&kind=chat`).catch(() => ({})),
-        ]);
-        // Only models the chat API serves: image and embedding models have tabs of their own.
-        const models = (data.models || []).filter((m) => m.kind === 'chat');
-        providerModelCache[provider] = { models, defaultModel: def.model || null };
-        populateModelSelect(selectEl, providerModelCache[provider]);
-      } catch {
-        // leave just the default option
-      }
-    }
-
-    // `{models, defaultModel}`: the picker's options, after "(default: …)".
-    function populateModelSelect(selectEl, { models, defaultModel }) {
-      const prev = selectEl.value;
-      selectEl.innerHTML = '';
-      const def = document.createElement('option');
-      def.value = '';
-      def.textContent = defaultModel ? `(default: ${defaultModel})` : '(default)';
-      selectEl.appendChild(def);
-      models.forEach((m) => {
-        const opt = document.createElement('option');
-        opt.value = m.id;
-        opt.textContent = m.name ? `${m.name} (${m.id})` : m.id;
-        selectEl.appendChild(opt);
-      });
-      // Keep the pick if the model is still there, else back to the default.
-      selectEl.value = models.some((m) => m.id === prev) ? prev : '';
-    }
-
-    // Read every chat provider's models again (they may have changed on the
-    // Models tab, or from the CLI), keeping each picker's choice.
+    // Read every provider's models again (they may have changed on the
+    // Models tab, or from the CLI), and check the picks against them.
     function refreshChatModels() {
-      providerModelCache = {};
-      chatColumns().forEach((col) => {
-        const sel = document.getElementById(`provider-model-${col.id}`);
-        if (sel) fetchModelsForProvider(col.provider, sel);
-      });
+      pickModelCache.chat = {};
+      renderProviderSelector();
     }
 
+    // The picks Chat sends to: their ids (labels, unique), each one's model
+    // when it names one, and what each sends to (`openai#work`).
     function getSelectedModels() {
       const models = {};
-      chatColumns().forEach(({ id }) => {
-        const sel = document.getElementById(`provider-model-${id}`);
-        if (sel && sel.value) models[id] = sel.value;
-      });
+      activePicks('chat').forEach((p) => { if (p.model) models[p.id] = p.model; });
       return models;
+    }
+    function getSelectedTargets() {
+      const targets = {};
+      activePicks('chat').forEach((p) => { targets[p.id] = pickSpec(p); });
+      return targets;
     }
 
     function getSelectedProviders() {
-      return Array.from(providerListEl.querySelectorAll('input[type="checkbox"]:checked')).map((el) => el.value);
+      return activePicks('chat').map((p) => p.id);
     }
 
     function updateGenerateBtn() {
@@ -2898,7 +2819,6 @@
           PROVIDERS = names;
         }
         CHAT_PROVIDERS = (data.providers || []).filter((p) => p.chat !== false).map((p) => p.name);
-        providerModelCache = {};
         providerKeys = {};
         (data.providers || []).forEach((p) => {
           providerConfigured[p.name] = p.configured !== false;
@@ -3637,7 +3557,7 @@
       respondAbortController = new AbortController();
       refreshStopButton();
 
-      const payload = { prompt, providers, models, tools, cite, verbose };
+      const payload = { prompt, providers, models, targets: getSelectedTargets(), tools, cite, verbose };
       try {
         if (stream) {
           await runRespondStreaming(payload, providers, respondAbortController.signal);
@@ -5036,18 +4956,18 @@
       'img-save-prompt': () => promptSave({ ph: 'NAME' }, promptText(imgPromptEl)),
       'chat-respond': () => {
         const text = PH(promptText(chatPromptEl), 'TEXT');
-        const providers = getSelectedProviders();
-        if (!providers.length) return null;
-        const models = getSelectedModels();
+        const picks = activePicks('chat');
+        if (!picks.length) return null;
         const stream = document.getElementById('respondStream').checked;
         const cite = document.getElementById('respondCite').checked;
         const verbose = document.getElementById('respondVerbose').checked;
         const tools = [...respondSelectedTools];
+        const providers = picks;
         return {
-          cli: providers.map((p) => cliLine('respond', shq(p), shArg(text), models[p] ? `--model ${shq(models[p])}` : '',
+          cli: picks.map((p) => cliLine('respond', shq(pickSpec(p)), shArg(text), p.model ? `--model ${shq(p.model)}` : '',
             tools.length ? `--tool ${shq(tools.join(','))}` : '', cite && '--cite', stream && '--stream', verbose && '-v')),
-          py: providers.map((p) => {
-            const call = pyCall(stream ? 'stream' : 'respond', [p, text], { model: models[p] || undefined, tools, cite });
+          py: picks.map((p) => {
+            const call = pyCall(stream ? 'stream' : 'respond', [pickSpec(p), text], { model: p.model || undefined, tools, cite });
             return stream ? `for event in ${call}:\n    print(event)` : `print(${call}["text"])`;
           }),
           note: providers.length > 1 ? 'One command per provider; the app sends them all at once.' : undefined,
@@ -5062,10 +4982,11 @@
         return {
           cli: providers.map((p) => {
             const opts = imgCollectOptions(p);
-            return cliLine('respond', shq(p), shArg(text), '--output image', imgState[p].model ? `--model ${shq(imgState[p].model)}` : '',
+            const pk = imgPick(p);
+            return cliLine('respond', shq(pk.spec), shArg(text), '--output image', pk.model ? `--model ${shq(pk.model)}` : '',
               ...Object.entries(opts).map(([k, v]) => `--set ${shq(`${k}=${v}`)}`), `--out ${shq(dir)}`);
           }),
-          py: providers.map((p) => pyCall('generate', [p, text], { model: imgState[p].model || undefined, out_dir: dir, set: imgCollectOptions(p) })),
+          py: providers.map((p) => pyCall('generate', [imgPick(p).spec, text], { model: imgPick(p).model || undefined, out_dir: dir, set: imgCollectOptions(p) })),
           note: providers.length > 1 ? 'One command per provider; the app sends them all at once.' : undefined,
         };
       },
@@ -6189,10 +6110,9 @@
     const IMG_OPTION_LABELS = { n: 'Count' };
 
     let imgProviders = [];    // from /api/images/providers, in config order
-    // Per provider: {checked, model, models, defaultModel, options, values, seq, error}.
-    // `values` (setting path → value) is kept when the model changes.
+    // Per pick (its id): {options, values, seq, error} — the image API's
+    // settings for its model; `values` (setting path → value) are kept.
     const imgState = {};
-    let imgFirstLoad = true;
     let imgBusy = false;
     let imgResults = [];      // newest first: {status, prompt, provider, model, images?, error?, started}
 
@@ -6201,14 +6121,16 @@
       setStatus(text, tone);
     }
 
-    // The Images columns: each provider that can make images, one per key
-    // when it has named keys (`keyColumns`). `name` is the column
-    // (`openai#work`), `provider` the provider.
+    // Images' picks (see "Provider picks"): the ones it sends to, each with
+    // `name` its id, `spec` what it sends to (`openai#work`) and `model`.
     function imgUsable() {
-      return imgProviders.filter((p) => p.images).flatMap((p) => keyColumns(p.name, p.keys)
-        .map((c) => ({ ...p, name: c.id, provider: p.name, key: c.key, hasKey: c.hasKey, label: c.label })));
+      return activePicks('images').map((p) => {
+        const prov = imgProviders.find((x) => x.name === p.provider) || {};
+        return { ...prov, name: p.id, provider: p.provider, key: p.key, spec: pickSpec(p), model: p.model, label: p.id };
+      });
     }
-    function imgChecked() { return imgUsable().filter((p) => imgState[p.name]?.checked).map((p) => p.name); }
+    const imgPick = (id) => imgUsable().find((p) => p.name === id);
+    function imgChecked() { return imgUsable().map((p) => p.name); }
     function imgUpdateGenerateBtn() {
       const ready = !imgBusy && imgChecked().length > 0 && imgPromptEl.value.trim().length > 0;
       imgGenerateBtn.disabled = !ready;
@@ -6225,20 +6147,10 @@
         imgProviders = prov.providers || [];
         imgDirEl.textContent = prov.images_dir || '';
         promptsChanged(prompts.prompts || []);
-        const usable = imgUsable();
-        usable.forEach((p) => {
-          if (!imgState[p.name]) imgState[p.name] = { checked: false, model: '', models: null, defaultModel: p.default_model, options: null, values: {}, seq: 0, error: '' };
-          imgState[p.name].defaultModel = p.default_model;
-        });
-        // A column that's gone (a key removed, an image API taken away) isn't sent to.
-        Object.keys(imgState).forEach((n) => { if (!usable.some((p) => p.name === n)) imgState[n].checked = false; });
-        // The first time, tick the first provider that can make images.
-        if (imgFirstLoad && usable.length) imgState[usable[0].name].checked = true;
-        imgFirstLoad = false;
-        imgProviderNoteEl.textContent = usable.length ? ''
+        await validatePicks('images');
+        imgProviderNoteEl.textContent = imgProviders.some((p) => p.images) ? ''
           : 'None of your providers has an image API. Add one to a provider with `lexi providers api add <provider> image-generations`.';
         renderImgProviders();
-        await Promise.all(usable.map((p) => loadImgModels(p.name)));
       } catch (err) {
         imgSetStatus(err.message, 'error');
       }
@@ -6252,73 +6164,21 @@
       if (sorted.some((p) => p.name === prev)) imgPromptSelectEl.value = prev;
     }
 
-    // The model picker's options: the default, then the provider's image
-    // models (configured first, then the rest of its cached model list).
-    function imgModelOptions(st) {
-      const label = (m) => (m.name && m.name !== m.id ? `${m.id} — ${m.name}` : m.id);
-      const group = (title, list) => (list.length
-        ? `<optgroup label="${esc(title)}">${list.map((m) => `<option value="${esc(m.id)}">${esc(label(m))}</option>`).join('')}</optgroup>`
-        : '');
-      const models = st.models || [];
-      return `<option value="">Default${st.defaultModel ? ` (${esc(st.defaultModel)})` : ''}</option>`
-        + group('Configured', models.filter((m) => m.configured))
-        + group("In the provider's list", models.filter((m) => !m.configured).sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })));
-    }
-
-    // Like the Chat tab: one pill per provider that can make images (tick box
-    // and model picker), and below them a settings row for each ticked one
-    // (that image API's settings). Providers without an image API aren't listed.
+    // The picks (chips and +), and below them a settings row for each one
+    // that's sent (that image API's settings for its model).
     function renderImgProviders() {
-      imgProvidersEl.innerHTML = '<span class="muted" style="font-size:0.95rem;">Providers:</span>';
+      renderPicks('images', imgProvidersEl, renderImgProviders);
       imgSettingsEl.innerHTML = '';
       imgUsable().forEach((p, pi) => {
+        if (!imgState[p.name]) imgState[p.name] = { options: null, values: {}, seq: 0, error: '' };
         const st = imgState[p.name];
-        const pill = document.createElement('div');
-        pill.className = 'provider-pill';
-        pill.dataset.provider = p.name;
-        const cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.id = `imgProv${pi}`;
-        cb.className = 'img-prov-check';
-        cb.value = p.name;
-        cb.checked = !!st.checked;
-        cb.addEventListener('change', () => {
-          st.checked = cb.checked;
-          renderImgProviders();
-          if (st.checked && !st.options) loadImgOptions(p.name);
-        });
-        const lbl = document.createElement('label');
-        lbl.htmlFor = cb.id;
-        lbl.style.margin = '0';
-        lbl.style.cursor = 'pointer';
-        lbl.textContent = p.label;
-        if (p.key !== null) lbl.dataset.tip = `${p.provider} with its key ${p.key ? `#${p.key}` : '# (saved before keys had names)'}`;
-        if (p.hasKey === false) {
-          lbl.classList.add('provider-unconfigured');
-          lbl.dataset.tip = `${p.name} has no API key yet: save one on the Providers tab`;
-        }
-        const sel = document.createElement('select');
-        sel.className = 'img-prov-model';
-        sel.setAttribute('aria-label', `${p.name} model`);
-        sel.innerHTML = imgModelOptions(st);
-        sel.value = st.model;
-        if (sel.value !== st.model) st.model = '';
-        sel.addEventListener('change', () => {
-          st.model = sel.value;
-          st.options = null;
-          st.error = '';
-          loadImgOptions(p.name);
-        });
-        pill.append(cb, lbl, sel);
-        imgProvidersEl.appendChild(pill);
-
-        if (!st.checked) return;
+        if (!st.options && !st.loading) { st.loading = true; loadImgOptions(p.name); }
         const row = document.createElement('div');
         row.className = 'respond-controls';
         row.dataset.provider = p.name;
         const who = document.createElement('span');
         who.className = 'img-settings-provider';
-        who.textContent = p.name;
+        who.textContent = p.label;
         row.appendChild(who);
         const opts = st.options || [];
         opts.forEach((o, i) => row.appendChild(renderImgOption(pi, i, st, o)));
@@ -6334,25 +6194,13 @@
       imgUpdateGenerateBtn();
     }
 
-    async function loadImgModels(provider) {
-      const st = imgState[provider];
-      try {
-        const data = await api(`/api/images/models?provider=${encodeURIComponent(baseProvider(provider))}`, { method: 'GET' });
-        st.models = data.models || [];
-        if (data.default_model) st.defaultModel = data.default_model;
-      } catch (err) {
-        st.models = [];
-        st.error = err.message;
-      }
-      renderImgProviders();
-      if (st.checked) await loadImgOptions(provider);
-    }
-
-    async function loadImgOptions(provider) {
-      const st = imgState[provider];
+    async function loadImgOptions(id) {
+      const st = imgState[id];
+      const pick = imgPick(id);
+      if (!st || !pick) return;
       const seq = ++st.seq;
       try {
-        const q = `provider=${encodeURIComponent(baseProvider(provider))}${st.model ? `&model=${encodeURIComponent(st.model)}` : ''}`;
+        const q = `provider=${encodeURIComponent(pick.provider)}${pick.model ? `&model=${encodeURIComponent(pick.model)}` : ''}`;
         const data = await api(`/api/images/options?${q}`, { method: 'GET' });
         if (seq !== st.seq) return;
         st.options = (data.options || []).filter((o) => !IMG_HIDDEN_OPTIONS.has(o.path));
@@ -6362,6 +6210,7 @@
         st.options = [];
         st.error = err.message;
       }
+      st.loading = false;
       renderImgProviders();
     }
 
@@ -6502,7 +6351,7 @@
       const providers = imgChecked();
       if (!providers.length) { imgSetStatus('Tick at least one provider.', 'error'); return; }
       const started = Date.now();
-      const entries = providers.map((provider) => ({ status: 'pending', prompt, provider, model: imgState[provider].model, started }));
+      const entries = providers.map((provider) => ({ status: 'pending', prompt, provider, spec: imgPick(provider).spec, model: imgPick(provider).model || '', started }));
       imgResults.unshift(...entries);
       imgBusy = true;
       imgUpdateGenerateBtn();
@@ -6514,7 +6363,7 @@
         try {
           const data = await api('/api/images/generate', {
             method: 'POST',
-            body: JSON.stringify({ provider: entry.provider, model: entry.model, prompt, options: imgCollectOptions(entry.provider) }),
+            body: JSON.stringify({ provider: entry.spec, model: entry.model, prompt, options: imgCollectOptions(entry.provider) }),
           });
           Object.assign(entry, { status: 'done', model: data.model, images: data.images || [], warnings: data.warnings || [] });
         } catch (err) {
@@ -6596,12 +6445,11 @@
         const r = imgResults[+retry.dataset.r];
         imgPromptEl.value = r.prompt;
         imgEditor.refresh();
-        if (imgUsable().some((p) => p.name === r.provider)) {
-          imgUsable().forEach((p) => { imgState[p.name].checked = p.name === r.provider; });
-          const st = imgState[r.provider];
-          const known = (st.models || []).some((m) => m.id === r.model);
-          const model = known && r.model !== st.defaultModel ? r.model : '';
-          if (st.model !== model || !st.options) { st.model = model; st.options = null; loadImgOptions(r.provider); }
+        const ids = pickIds('images');
+        const at = ids.indexOf(r.provider);
+        if (at >= 0) {
+          PICKS.images.forEach((pk, i) => { pk.on = i === at; });
+          savePicks('images');
           renderImgProviders();
         }
         imgUpdateGenerateBtn();
@@ -7676,6 +7524,255 @@
       if (Array.isArray(cfg.hidden_tabs)) hiddenTabs = new Set(cfg.hidden_tabs);
       applyTabLayout(Array.isArray(cfg.tab_order) ? cfg.tab_order : null);
     }).catch(() => {});
+
+    // --- Provider picks (Chat and Images) ---
+    // The providers a tab sends to are your picks: chips, each a provider and
+    // optionally a key (`openai#work`) and a model, added with +. Click a chip
+    // to leave it out (or back in), × to remove it. Picks are remembered in
+    // config.json (`chat_picks`, `images_picks`: [{provider, key, model, on}])
+    // and checked whenever the tab loads: one that no longer works (a
+    // provider, key or model that's gone, a provider that isn't ready) is
+    // marked with why, and isn't sent.
+    const PICKS = { chat: [], images: [] };
+    let picksLoaded = false;
+    const PICK_TABS = { chat: 'Chat', images: 'Images' };
+
+    // What a pick sends to: `openai#work`, or `openai` (no key named).
+    const pickSpec = (p) => (p.key === null || p.key === undefined ? p.provider : `${p.provider}#${p.key}`);
+    const pickLabel = (p) => `${pickSpec(p)}${p.model ? ` · ${p.model}` : ''}`;
+    // Each pick's id: its label, made unique ("openai · gpt-4o (2)").
+    function pickIds(kind) {
+      const seen = {};
+      return PICKS[kind].map((p) => {
+        const l = pickLabel(p);
+        seen[l] = (seen[l] || 0) + 1;
+        return seen[l] > 1 ? `${l} (${seen[l]})` : l;
+      });
+    }
+    // The picks a tab sends to: on, and nothing wrong with them.
+    function activePicks(kind) {
+      const ids = pickIds(kind);
+      return PICKS[kind].map((p, i) => ({ ...p, id: ids[i] })).filter((p) => p.on && !p.problem);
+    }
+
+    // The providers a tab can pick from, with their keys: Chat's can chat,
+    // Images' can make images.
+    function pickProviders(kind) {
+      if (kind === 'chat') return CHAT_PROVIDERS.map((name) => ({ name, keys: providerKeys[name] }));
+      return imgProviders.filter((p) => p.images).map((p) => ({ name: p.name, keys: p.keys, default_model: p.default_model }));
+    }
+
+    // A tab's models for a provider: {models: [{id, name}], defaultModel}.
+    const pickModelCache = { chat: {}, images: {} };
+    async function pickModels(kind, provider) {
+      const cache = pickModelCache[kind];
+      if (cache[provider]) return cache[provider];
+      const q = encodeURIComponent(provider);
+      let out;
+      if (kind === 'chat') {
+        const [data, def] = await Promise.all([
+          api(`/api/models?provider=${q}`),
+          api(`/api/models/default?provider=${q}&kind=chat`).catch(() => ({})),
+        ]);
+        out = { models: (data.models || []).filter((m) => m.kind === 'chat'), defaultModel: def.model || null };
+      } else {
+        const data = await api(`/api/images/models?provider=${q}`, { method: 'GET' });
+        out = { models: data.models || [], defaultModel: data.default_model || null };
+      }
+      cache[provider] = out;
+      return out;
+    }
+
+    // Why a pick won't work now, or '' — checked against the providers and
+    // their keys (and, once loaded, their models).
+    function pickProblem(kind, p) {
+      const prov = pickProviders(kind).find((x) => x.name === p.provider);
+      if (!prov) {
+        return PROVIDERS.includes(p.provider)
+          ? `${p.provider} can't ${kind === 'chat' ? 'chat' : 'make images'} any more`
+          : `${p.provider} isn't one of your providers any more`;
+      }
+      const info = prov.keys || {};
+      const keys = Array.isArray(info.keys) ? info.keys : [];
+      if (p.key !== null && p.key !== undefined) {
+        const k = keys.find((x) => x.name === p.key);
+        if (!k) return `its key #${p.key} was deleted or renamed`;
+        if (k.error) return `#${p.key} can't be read: ${k.error}`;
+        if (!k.source) return `#${p.key} has no key yet`;
+      } else if (prov.keys && info.ready === false) {
+        return { 'no key': `${p.provider} has no key`, 'no default key': `${p.provider} has no default key`, 'no key found': `${p.provider}'s default key wasn't found` }[info.reason] || `${p.provider} isn't ready`;
+      }
+      const models = pickModelCache[kind][p.provider];
+      if (p.model && models && !models.models.some((m) => m.id === p.model)) return `the model ${p.model} isn't one of its ${kind === 'chat' ? 'chat' : 'image'} models any more`;
+      return '';
+    }
+
+    // Check a tab's picks (after its providers have loaded): mark the ones that
+    // won't work, and say so once.
+    async function validatePicks(kind) {
+      if (!picksLoaded) return;
+      // A first visit: start with the first provider that's ready.
+      if (!PICKS[kind].length && !picksSaved[kind]) {
+        const first = pickProviders(kind).find((x) => !x.keys || x.keys.ready !== false);
+        if (first) PICKS[kind].push({ provider: first.name, key: null, model: null, on: true });
+      }
+      await Promise.all([...new Set(PICKS[kind].filter((p) => p.model).map((p) => p.provider))]
+        .map((prov) => pickModels(kind, prov).catch(() => null)));
+      const before = PICKS[kind].map((p) => p.problem || '').join('|');
+      PICKS[kind].forEach((p) => { p.problem = pickProblem(kind, p); });
+      const bad = PICKS[kind].filter((p) => p.problem);
+      if (bad.length && PICKS[kind].map((p) => p.problem || '').join('|') !== before) {
+        setStatus(bad.length === 1
+          ? `${pickLabel(bad[0])} won't be sent: ${bad[0].problem}.`
+          : `${bad.length} of ${PICK_TABS[kind]}'s providers won't be sent (see their chips).`, 'warn');
+      }
+    }
+
+    let picksSaved = { chat: false, images: false };
+    async function savePicks(kind) {
+      picksSaved[kind] = true;
+      const list = PICKS[kind].map(({ provider, key, model, on }) => ({ provider, key, model, on }));
+      try {
+        await api('/api/config', { method: 'POST', body: JSON.stringify({ [`${kind}_picks`]: list }) });
+      } catch (err) {
+        setStatus(`Couldn't save ${PICK_TABS[kind]}'s providers: ${err.message}`, 'error');
+      }
+    }
+
+    // The chips and +, in `el`; `onChange` after a change (re-render the tab).
+    function renderPicks(kind, el, onChange) {
+      el.innerHTML = '<span class="muted" style="font-size:0.95rem;">Providers:</span>';
+      const ids = pickIds(kind);
+      PICKS[kind].forEach((p, i) => {
+        const chip = document.createElement('span');
+        chip.className = `pick-chip${p.on ? ' on' : ' off'}${p.problem ? ' bad' : ''}`;
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'pick-toggle';
+        toggle.dataset.cmd = 'none';
+        toggle.textContent = `${p.problem ? '⚠ ' : ''}${ids[i]}`;
+        toggle.dataset.tip = p.problem
+          ? `Won't be sent: ${p.problem}. Remove it with ×, or fix it on the Providers or Models tab.`
+          : p.on
+            ? `${pickSpec(p)}${p.key === null || p.key === undefined ? ' (its default key)' : ''}, ${p.model ? `model ${p.model}` : 'its default model'}. Click to leave it out for now (it stays here)`
+            : 'Left out for now. Click to include it again';
+        toggle.setAttribute('aria-pressed', String(!!p.on));
+        toggle.addEventListener('click', () => {
+          p.on = !p.on;
+          savePicks(kind);
+          onChange();
+        });
+        const rm = document.createElement('button');
+        rm.type = 'button';
+        rm.className = 'pick-remove';
+        rm.dataset.cmd = 'none';
+        rm.dataset.tip = `Remove ${ids[i]}`;
+        rm.setAttribute('aria-label', `Remove ${ids[i]}`);
+        rm.textContent = '×';
+        rm.addEventListener('click', () => {
+          PICKS[kind].splice(i, 1);
+          savePicks(kind);
+          onChange();
+        });
+        chip.append(toggle, rm);
+        el.appendChild(chip);
+      });
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'tab-add pick-add';
+      add.dataset.cmd = 'none';
+      add.textContent = '+';
+      const choices = pickProviders(kind);
+      add.dataset.tip = choices.length
+        ? `Add a provider to send to: its default key and model, or one you choose`
+        : kind === 'chat' ? 'None of your providers has a chat model' : 'None of your providers can make images (add an image API on the Providers tab)';
+      add.setAttribute('aria-label', 'Add a provider');
+      add.disabled = !choices.length;
+      add.addEventListener('click', () => openPickDialog(kind, onChange));
+      el.appendChild(add);
+      if (!PICKS[kind].length && choices.length) {
+        el.insertAdjacentHTML('beforeend', '<span class="muted" style="font-size:0.9rem;">add a provider with +</span>');
+      }
+    }
+
+    // + : choose a provider, and optionally a key and a model.
+    async function openPickDialog(kind, onChange) {
+      const choices = pickProviders(kind);
+      if (!choices.length) return;
+      const body = document.createElement('div');
+      body.innerHTML = `
+        <label for="pickProvider" style="margin-top:0;">Provider</label>
+        <select id="pickProvider">${choices.map((c) => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('')}</select>
+        <label for="pickKey">Key</label>
+        <select id="pickKey"></select>
+        <label for="pickModel">Model</label>
+        <select id="pickModel"><option value="">Default</option></select>
+        <p class="hint" id="pickHint"></p>`;
+      const provEl = body.querySelector('#pickProvider');
+      const keyEl = body.querySelector('#pickKey');
+      const modelEl = body.querySelector('#pickModel');
+      const hintEl = body.querySelector('#pickHint');
+      const fill = async () => {
+        const prov = choices.find((c) => c.name === provEl.value) || choices[0];
+        const info = prov.keys || {};
+        const keys = Array.isArray(info.keys) ? info.keys : [];
+        const v = info.variable && info.variable.set ? `$${info.variable.name}` : null;
+        const def = keys.find((k) => k.default);
+        const usesNow = v || (def ? `${prov.name}${def.label}` : null);
+        keyEl.innerHTML = `<option value="">Default${usesNow ? ` (${esc(usesNow)})` : ''}</option>`
+          + keys.map((k) => `<option value="${esc(k.name)}" ${k.source ? '' : 'disabled'}>${esc(prov.name)}${esc(k.label)}${k.source ? '' : ' (no key yet)'}</option>`).join('');
+        hintEl.textContent = v
+          ? `Default: a request that names no key uses $${info.variable.name} while it's set, else the ★ key.`
+          : 'Default: the ★ key — the one a request that names no key uses.';
+        modelEl.innerHTML = '<option value="">Default (loading…)</option>';
+        try {
+          const m = await pickModels(kind, prov.name);
+          if (provEl.value !== prov.name) return;
+          modelEl.innerHTML = `<option value="">Default${m.defaultModel ? ` (${esc(m.defaultModel)})` : ''}</option>`
+            + m.models.map((x) => `<option value="${esc(x.id)}">${esc(x.name && x.name !== x.id ? `${x.id} — ${x.name}` : x.id)}</option>`).join('');
+        } catch {
+          modelEl.innerHTML = '<option value="">Default</option>';
+        }
+      };
+      provEl.addEventListener('change', fill);
+      const added = await openDialog({
+        title: `Add a provider to ${PICK_TABS[kind]}`,
+        okLabel: 'Add',
+        body,
+        onOpen: () => fill(),
+        onOk: () => {
+          const pick = { provider: provEl.value, key: keyEl.value === '' ? null : keyEl.value, model: modelEl.value || null, on: true };
+          if (PICKS[kind].some((p) => pickLabel(p) === pickLabel(pick))) throw new Error(`${pickLabel(pick)} is already there.`);
+          return pick;
+        },
+      });
+      if (!added) return;
+      PICKS[kind].push(added);
+      added.problem = pickProblem(kind, added);
+      savePicks(kind);
+      setStatus(`${PICK_TABS[kind]} sends to ${pickLabel(added)} too.`, 'success');
+      onChange();
+    }
+
+    // Your saved picks (a first run has none: the tab starts with one).
+    api('/api/config', { method: 'GET' }).then((cfg) => {
+      for (const kind of ['chat', 'images']) {
+        const saved = cfg[`${kind}_picks`];
+        if (Array.isArray(saved)) {
+          picksSaved[kind] = true;
+          PICKS[kind] = saved.filter((p) => p && p.provider).map((p) => ({
+            provider: String(p.provider),
+            key: p.key === null || p.key === undefined ? null : String(p.key),
+            model: p.model ? String(p.model) : null,
+            on: p.on !== false,
+          }));
+        }
+      }
+    }).catch(() => {}).finally(() => {
+      picksLoaded = true;
+      if (CHAT_PROVIDERS.length) renderProviderSelector();
+      if (imgProviders.length) refreshImagesTab();
+    });
 
     (function wireConfigureSubtabs() {
       const subtabs = document.querySelectorAll('#configureSubtabs .subtab');

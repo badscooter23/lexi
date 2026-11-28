@@ -1228,9 +1228,20 @@ pub async fn stream(body: Value, on_event: tauri::ipc::Channel<String>) -> Resul
         .get("models")
         .and_then(Value::as_object)
         .unwrap_or(&empty);
+    // A column's id may differ from what it sends to (two columns for one
+    // key, with different models): `targets` maps id → `openai#work`.
+    let targets = body
+        .get("targets")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
 
     let jobs = providers.iter().filter_map(Value::as_str).map(|provider| {
         let provider = provider.to_string();
+        let spec = targets
+            .get(&provider)
+            .and_then(Value::as_str)
+            .unwrap_or(&provider)
+            .to_string();
         let model = models
             .get(&provider)
             .and_then(Value::as_str)
@@ -1243,7 +1254,7 @@ pub async fn stream(body: Value, on_event: tauri::ipc::Channel<String>) -> Resul
             let cb_ch = ch.clone();
             let p = provider.clone();
             // A column may be a named key: `openai#work`.
-            let result = match split_column(&provider) {
+            let result = match split_column(&spec) {
                 Ok((name, key)) => {
                     let run = lexi_host::respond_stream_text(
                         &name,
@@ -1297,14 +1308,22 @@ async fn respond(body: Value) -> Result<Value, String> {
 
     // Fan out over the selected providers concurrently; `join_all` preserves the
     // input order, so the rendered responses stay stable.
+    let targets = body
+        .get("targets")
+        .and_then(Value::as_object)
+        .unwrap_or(&empty);
     let jobs = providers.iter().filter_map(Value::as_str).map(|provider| {
         let model = models
             .get(provider)
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty());
+        let spec = targets
+            .get(provider)
+            .and_then(Value::as_str)
+            .unwrap_or(provider);
         async move {
             // A column may be a named key: `openai#work`.
-            let (name, key) = match split_column(provider) {
+            let (name, key) = match split_column(spec) {
                 Ok(v) => v,
                 Err(e) => return json!({ "provider": provider, "error": e }),
             };
@@ -2331,6 +2350,26 @@ pub(crate) mod tests {
                 ("p#work", "billed to work")
             ]
         );
+        // Columns with ids of their own (Chat's picks): `targets` says what
+        // each sends to.
+        let res = call(
+            "/api/respond",
+            json!({ "prompt": "hi", "providers": ["one", "two"], "targets": { "one": "p#", "two": "p#work" } }),
+        )
+        .await
+        .unwrap();
+        let out: Vec<(&str, &str)> = res["responses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                (
+                    r["provider"].as_str().unwrap(),
+                    r["output"].as_str().unwrap_or(""),
+                )
+            })
+            .collect();
+        assert_eq!(out, [("one", "billed to main"), ("two", "billed to work")]);
         let bad = call(
             "/api/respond",
             json!({ "prompt": "hi", "providers": ["p#nope"] }),
