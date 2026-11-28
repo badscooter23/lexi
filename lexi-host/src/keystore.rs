@@ -412,9 +412,22 @@ const COMMAND_TIMEOUT: Duration = if cfg!(test) {
 
 /// Keys commands printed, by argv, for the life of the process (so a Touch
 /// ID prompt comes once, not once per request).
+#[cfg(not(test))]
 fn command_cache() -> &'static Mutex<HashMap<Vec<String>, String>> {
     static CACHE: OnceLock<Mutex<HashMap<Vec<String>, String>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Unit tests run side by side, and many change keys (which forgets the
+/// cache): each test thread gets its own, so one test never clears what
+/// another is checking.
+#[cfg(test)]
+fn command_cache() -> &'static Mutex<HashMap<Vec<String>, String>> {
+    thread_local! {
+        static CACHE: &'static Mutex<HashMap<Vec<String>, String>> =
+            Box::leak(Box::new(Mutex::new(HashMap::new())));
+    }
+    CACHE.with(|c| *c)
 }
 
 fn cached(argv: &[String]) -> Option<String> {
