@@ -232,15 +232,16 @@ mod os_store {
         assert_ne!(store.has("p", &h), Some(false));
         assert!(!stderr(&in_store(&["version"]).output().unwrap()).contains("Moved"));
 
+        // A key from before names: the unnamed key, `p#`.
         let status = common::run(in_store(&["providers", "status", "p"])).await;
         assert_eq!(
             stdout(&status),
-            format!("p: ready (key from {NAME})\n"),
+            format!("p#: ready (key from {NAME})\np: requests that name no key use p# ★.\n"),
             "{}",
             stderr(&status)
         );
         let info = json(
-            &in_store(&["--json", "providers", "api-key", "show", "p"])
+            &in_store(&["--json", "providers", "api-key", "show", "p#"])
                 .output()
                 .unwrap(),
         );
@@ -250,19 +251,35 @@ mod os_store {
         assert_eq!(info["sources"][0]["state"], "used");
 
         // Saving replaces it there; no file appears.
-        let set = in_store(&["providers", "api-key", "set", "p", "--value", "sk-new"])
+        let set = in_store(&["providers", "api-key", "set", "p#", "--value", "sk-new"])
             .output()
             .unwrap();
         assert_eq!(
             stdout(&set),
-            format!("Saved the API key for p in {NAME}.\n"),
+            format!("Saved the API key for p# in {NAME}.\n"),
             "{}",
             stderr(&set)
         );
-        assert!(!key_file.exists());
-        let status = common::run(in_store(&["providers", "status", "p"])).await;
+        // A named key has its own item there.
+        let named = in_store(&["providers", "api-key", "set", "p#work", "--value", "sk-new"])
+            .output()
+            .unwrap();
         assert!(
-            stdout(&status).starts_with("p: ready"),
+            stdout(&named).starts_with(&format!("Saved the API key for p#work in {NAME}.")),
+            "{}",
+            stderr(&named)
+        );
+        let status = common::run(in_store(&["providers", "status", "p#work"])).await;
+        assert_eq!(
+            stdout(&status),
+            format!("p#work: ready (key from {NAME})\n"),
+            "{}",
+            stderr(&status)
+        );
+        assert!(!key_file.exists());
+        let status = common::run(in_store(&["providers", "status", "p#"])).await;
+        assert!(
+            stdout(&status).starts_with("p#: ready"),
             "{}",
             stderr(&status)
         );
@@ -275,7 +292,7 @@ mod os_store {
             .success());
         assert_ne!(store.has("p", &h), Some(true));
         let shown = json(
-            &in_store(&["--json", "providers", "api-key", "show", "q", "--reveal"])
+            &in_store(&["--json", "providers", "api-key", "show", "q#", "--reveal"])
                 .output()
                 .unwrap(),
         );
